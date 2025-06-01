@@ -8,9 +8,14 @@ class MowenPublishModal extends Modal {
 	title: string;
 	tags: string;
 	autoPublish: boolean;
-	onSubmit: (title: string, tags: string, autoPublish: boolean) => void;
+	section: number = 0;
+	privacy: 'public' | 'private' | 'rule' = 'public';
+	noShare: boolean = false;
+	expireAt: number = 0;
 
-	constructor(app: App, content: string, title: string, tags: string, autoPublish: boolean, onSubmit: (title: string, tags: string, autoPublish: boolean) => void) {
+	onSubmit: (title: string, tags: string, autoPublish: boolean, settings: any) => void;
+
+	constructor(app: App, content: string, title: string, tags: string, autoPublish: boolean, onSubmit: (title: string, tags: string, autoPublish: boolean, settings: any) => void) {
 		const newTags = markdownTagsToNoteAtomTags(content);
 		super(app);
 		this.content = content;
@@ -60,12 +65,85 @@ class MowenPublishModal extends Modal {
 			.setDesc(this.content.length > 100 ? this.content.slice(0, 100) + '...' : this.content);
 
 		new Setting(contentEl)
+			.setName('隐私设置')
+			.setDesc('设置笔记隐私')
+			.addToggle(toggle => {
+				toggle.setValue(this.section === 1).onChange(value => {
+					this.section = value ? 1 : 0;
+					this.onClose();
+					this.onOpen();
+				});
+			});
+
+		if (this.section === 1) {
+			new Setting(contentEl)
+				.setName('隐私类型')
+				.setDesc('设置笔记的隐私类型')
+				.addDropdown(drop => {
+					drop.addOption('public', '公开');
+					drop.addOption('private', '私有');
+					drop.addOption('rule', '规则');
+					drop.setValue(this.privacy);
+					drop.onChange(value => {
+						this.privacy = value as 'public' | 'private' | 'rule';
+						this.onClose();
+						this.onOpen();
+					});
+				});
+		}
+
+		if (this.privacy === 'rule') {
+			new Setting(contentEl)
+				.setName('允许分享')
+				.setDesc('是否允许分享')
+				.addToggle(toggle => {
+					toggle.setValue(this.noShare).onChange(value => {
+						this.noShare = value;
+					});
+				});
+
+			new Setting(contentEl)
+				.setName('公开过期时间')
+				.setDesc('到期后自动变为私有，选择日期和时间')
+				.addText(text => {
+					let defaultValue = '';
+					if (this.expireAt) {
+						const date = new Date(this.expireAt * 1000);
+						defaultValue = date.toISOString().slice(0, 16);
+					}
+					text.inputEl.type = 'datetime-local';
+					text.setValue(defaultValue);
+					text.onChange((value) => {
+						if (value) {
+							this.expireAt = Math.floor(new Date(value).getTime() / 1000);
+						} else {
+							this.expireAt = 0;
+						}
+					});
+				});
+		}
+
+		new Setting(contentEl)
 			.addButton((btn) =>
 				btn
 					.setButtonText('发布')
 					.setCta()
 					.onClick(() => {
-						this.onSubmit(this.title, this.tags, this.autoPublish);
+						this.onSubmit(
+							this.title,
+							this.tags,
+							this.autoPublish,
+							{
+								section: this.section,
+								privacy: {
+									type: this.privacy,
+									rule: {
+										noShare: this.privacy === 'rule' ? this.noShare : undefined,
+										expireAt: this.privacy === 'rule' ? this.expireAt : undefined
+									}
+								}
+							}
+						);
 						this.close();
 					})
 			);
@@ -88,8 +166,8 @@ export default class MowenPlugin extends Plugin {
 							.setTitle('Publish to Mowen')
 							.setIcon('upload')
 							.onClick(() => {
-								new MowenPublishModal(this.app, selectedText, '', '', this.settings.autoPublish, async (title, tags, autoPublish) => {
-									await this.publishToMowen(title, selectedText, tags, autoPublish);
+								new MowenPublishModal(this.app, selectedText, '', '', this.settings.autoPublish, async (title, tags, autoPublish, settings) => {
+									await this.publishToMowen(title, selectedText, tags, autoPublish, settings);
 								}).open();
 							});
 					});
@@ -112,8 +190,8 @@ export default class MowenPlugin extends Plugin {
 						}
 						const content = markdownView.editor.getValue();
 						const title = file.basename;
-						new MowenPublishModal(this.app, content, title, '', this.settings.autoPublish, async (newTitle, tags, autoPublish) => {
-							await this.publishToMowen(newTitle, content, tags, autoPublish);
+						new MowenPublishModal(this.app, content, title, '', this.settings.autoPublish, async (newTitle, tags, autoPublish, settings) => {
+							await this.publishToMowen(newTitle, content, tags, autoPublish, settings);
 						}).open();
 					}
 					return true;
@@ -134,7 +212,7 @@ export default class MowenPlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
-	async publishToMowen(title: string, content: string, tags: string, autoPublish: boolean) {
+	async publishToMowen(title: string, content: string, tags: string, autoPublish: boolean, settings: any) {
 		const apiKey = this.settings.apiKey;
 		if (!apiKey) {
 			new Notice('请先在设置中填写 API-KEY');
@@ -149,7 +227,8 @@ export default class MowenPlugin extends Plugin {
 			title,
 			content,
 			tags: tagArr,
-			autoPublish
+			autoPublish,
+			settings
 		});
 		if (res.success) {
 			new Notice('发布成功！');
@@ -163,7 +242,7 @@ export default class MowenPlugin extends Plugin {
 		const activeFile = this.app.workspace.getActiveFile();
 		if (!activeFile) return;
 		const fileContent = await this.app.vault.read(activeFile);
-	
+
 		// 检查是否已有 frontmatter
 		let newContent: string;
 		if (fileContent.startsWith('---')) {
@@ -188,11 +267,11 @@ export default class MowenPlugin extends Plugin {
 			console.log('文件没有 frontmatter，创建新的 frontmatter');
 			newContent = `---\nnoteId: ${noteId}\n---\n${fileContent}`;
 		}
-	
+
 		console.log('新内容:', newContent);
 		await this.app.vault.modify(activeFile, newContent);
 	}
-	
+
 	/**
 	 * 从 frontmatter 中获取 noteId，存在则更新笔记，不存在则创建笔记
 	 * @returns {string | null}
