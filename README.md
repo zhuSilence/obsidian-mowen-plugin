@@ -1,94 +1,34 @@
-# Obsidian Sample Plugin
+### 项目基本信息
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+- **项目名称**: `obsidian-mowen-plugin`
+- **项目描述**: This is a mowen plugin for Obsidian (https://obsidian.md)
+- **主入口文件**: [main.js](file:///Users/silence/obsidian-mowen-plugin/obsidian-mowen-plugin/main.js)
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+### 使用的语言和技术栈
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open Sample Modal" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+从 [package.json](file:///Users/silence/obsidian-mowen-plugin/obsidian-mowen-plugin/node_modules/@eslint/js/package.json) 中的 `devDependencies` 可以看出该项目使用的主要技术如下：
 
-## First time developing plugins?
+- **开发语言**:
+  - TypeScript (`typescript`: "4.7.4")
+  - JavaScript (支持 Node.js 内置模块 `builtin-modules`: "3.3.0")
 
-Quick starting guide for new plugin devs:
+- **构建工具**:
+  - [esbuild](https://esbuild.github.io/) ([esbuild](file:///Users/silence/obsidian-mowen-plugin/obsidian-mowen-plugin/node_modules/esbuild/bin/esbuild): "0.17.3") —— 用于快速打包构建
+  - TypeScript 编译器 ([tsc](file:///Users/silence/obsidian-mowen-plugin/obsidian-mowen-plugin/node_modules/typescript/bin/tsc)) —— 用于类型检查和编译 TypeScript 源码
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `main.ts` to `main.js`.
-- Make changes to `main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+- **编辑器/IDE 支持**:
+  - ESLint + TypeScript ESLint 插件 (`@typescript-eslint/eslint-plugin`, `@typescript-eslint/parser`) —— 用于代码规范和静态分析
+  - `@types/node` —— 提供 Node.js 的 TypeScript 类型定义
 
-## Releasing new releases
+- **插件平台依赖**:
+  - [Obsidian](https://obsidian.md) (`obsidian`: "latest") —— 这是一个 Obsidian 客户端插件，因此该插件运行在 Obsidian 平台上。
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+- **辅助库**:
+  - `tslib` —— 用于 TypeScript 辅助函数（如 `__awaiter`, `__extends` 等）
 
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
+### 构建流程简述
 
-## Adding your plugin to the community plugin list
+- 开发模式: 执行 `npm run dev` 将调用 [esbuild.config.mjs](file:///Users/silence/obsidian-mowen-plugin/obsidian-mowen-plugin/esbuild.config.mjs) 启动开发构建。
+- 生产构建: `npm run build` 会执行 TypeScript 类型检查并使用 esbuild 构建生产环境版本，并复制必要的资源文件到 `dist` 目录。
+- 版本管理: `npm run version` 调用脚本 [version-bump.mjs](file:///Users/silence/obsidian-mowen-plugin/obsidian-mowen-plugin/version-bump.mjs) 来更新插件版本号并提交 [manifest.json](file:///Users/silence/obsidian-mowen-plugin/obsidian-mowen-plugin/manifest.json) 和 [versions.json](file:///Users/silence/obsidian-mowen-plugin/obsidian-mowen-plugin/versions.json)。
 
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
-
-## How to use
-
-- Clone this repo.
-- Make sure your NodeJS is at least v16 (`node --version`).
-- `npm i` or `yarn` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
-
-## Manually installing the plugin
-
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
-
-## Improve code quality with eslint (optional)
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
-- To use eslint with this project, make sure to install eslint from terminal:
-  - `npm install -g eslint`
-- To use eslint to analyze this project use this command:
-  - `eslint main.ts`
-  - eslint will then create a report with suggestions for code improvement by file and line number.
-- If your source code is in a folder, such as `src`, you can use eslint with this command to analyze all files in that folder:
-  - `eslint .\src\`
-
-## Funding URL
-
-You can include funding URLs where people who use your plugin can financially support it.
-
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
-
-```json
-{
-    "fundingUrl": "https://buymeacoffee.com"
-}
-```
-
-If you have multiple URLs, you can also do:
-
-```json
-{
-    "fundingUrl": {
-        "Buy Me a Coffee": "https://buymeacoffee.com",
-        "GitHub Sponsor": "https://github.com/sponsors",
-        "Patreon": "https://www.patreon.com/"
-    }
-}
-```
-
-## API Documentation
-
-See https://github.com/obsidianmd/obsidian-api
