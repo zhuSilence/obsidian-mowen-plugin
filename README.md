@@ -8,6 +8,10 @@
 
 从 [package.json](file:///Users/silence/obsidian-mowen-plugin/obsidian-mowen-plugin/node_modules/@eslint/js/package.json) 中的 `devDependencies` 可以看出该项目使用的主要技术如下：
 
+- **项目依赖**:
+  - 墨问 API KEY: 通过墨问小程序获取，用于调用墨问的 API，会员账号才有的权限
+  - 墨问开放接口: 墨问的官方开放接口，用于创建和修改笔记。
+
 - **开发语言**:
   - TypeScript (`typescript`: "4.7.4")
   - JavaScript (支持 Node.js 内置模块 `builtin-modules`: "3.3.0")
