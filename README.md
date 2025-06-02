@@ -36,3 +36,6 @@
 - 生产构建: `npm run build` 会执行 TypeScript 类型检查并使用 esbuild 构建生产环境版本，并复制必要的资源文件到 `dist` 目录。
 - 版本管理: `npm run version` 调用脚本 [version-bump.mjs](file:///Users/silence/obsidian-mowen-plugin/obsidian-mowen-plugin/version-bump.mjs) 来更新插件版本号并提交 [manifest.json](file:///Users/silence/obsidian-mowen-plugin/obsidian-mowen-plugin/manifest.json) 和 [versions.json](file:///Users/silence/obsidian-mowen-plugin/obsidian-mowen-plugin/versions.json)。
 
+## 使用说明
+找到本地 Obsidian 笔记文件夹位置，在.obsidian/plugin 文件夹下创建一个名称为 obsidian-mowen-plugin 的文件夹，将页面 https://github.com/zhuSilence/obsidian-mowen-plugin/releases/tag/0.0.1 上的 main.js,style.css,manifest.json 三个文件下载下来，放到刚刚创建的 obsidian-mowen-plugin 文件夹中。
+[](1.png)
