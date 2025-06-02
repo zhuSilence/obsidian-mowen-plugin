@@ -1,11 +1,10 @@
 {
-	"id": "obsidian-mowen-plugin",
-	"name": "Obsidian Mowen Plugin",
-	"version": "0.0.4",
+	"id": "publish-note-to-mowen",
+	"name": "Publist Note to Mowen Note",
+	"version": "0.0.6",
 	"minAppVersion": "0.15.0",
-	"description": "Demonstrates some of the capabilities of the Obsidian API.",
+	"description": "Publish note to Mowen note mini program.",
 	"author": "ziyou",
-	"authorUrl": "https://github.com/zhuSilence/obsidian-mowen-plugin",
-	"fundingUrl": "https://obsidian.md/pricing",
+	"authorUrl": "https://yuandifly.com",
 	"isDesktopOnly": false
 }
