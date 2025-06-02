@@ -183,42 +183,103 @@ export function markdownToNoteAtom(title: string, markdown: string): { content: 
       continue;
     }
 
-    // 4. 处理加粗文本
+    // 4. 处理普通文本（包括加粗和链接）
     if (line !== '') {
       const parts = [];
-      let currentText = '';
-      let inBold = false;
       
-      for (let j = 0; j < line.length; j++) {
-        if (line[j] === '*' && line[j + 1] === '*') {
-          if (currentText) {
-            parts.push({
-              type: 'text',
-              text: currentText,
-              marks: inBold ? [{ type: 'bold' }] : []
-            });
-            currentText = '';
+      // 处理链接的正则表达式
+      const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+      let lastIndex = 0;
+      let match;
+      
+      while ((match = linkRegex.exec(line)) !== null) {
+        // 处理链接前的普通文本
+        if (match.index > lastIndex) {
+          const textBeforeLink = line.slice(lastIndex, match.index);
+          // 处理加粗
+          let textParts = [];
+          let currentBoldText = '';
+          let inBoldSection = false;
+          
+          for (let j = 0; j < textBeforeLink.length; j++) {
+            if (textBeforeLink[j] === '*' && textBeforeLink[j + 1] === '*') {
+              if (currentBoldText) {
+                textParts.push({
+                  type: 'text',
+                  text: currentBoldText,
+                  marks: inBoldSection ? [{ type: 'bold' }] : []
+                });
+                currentBoldText = '';
+              }
+              inBoldSection = !inBoldSection;
+              j++;
+            } else {
+              currentBoldText += textBeforeLink[j];
+            }
           }
-          inBold = !inBold;
-          j++; // 跳过下一个 *
-        } else {
-          currentText += line[j];
+          
+          if (currentBoldText) {
+            textParts.push({
+              type: 'text',
+              text: currentBoldText,
+              marks: inBoldSection ? [{ type: 'bold' }] : []
+            });
+            // textParts.push({ type: 'paragraph' });
+          }
+          
+          parts.push(...textParts);
         }
-      }
-      
-      if (currentText) {
+        // 处理链接
         parts.push({
           type: 'text',
-          text: currentText,
-          marks: inBold ? [{ type: 'bold' }] : []
+          text: match[1],
+          marks: [{ type: 'link', attrs: { href: match[2] } },{type: 'bold'} ,{type: 'highlight'}]
         });
-        // 补充一个段落换行
-        if (!inCode) {
-          parts.push({ type: 'paragraph' });
+        
+        lastIndex = match.index + match[0].length;
+      }
+      
+      // 处理链接后的剩余文本
+      if (lastIndex < line.length) {
+        const remainingText = line.slice(lastIndex);
+        // 处理加粗
+        let textParts = [];
+        let currentBoldText = '';
+        let inBoldSection = false;
+        
+        for (let j = 0; j < remainingText.length; j++) {
+          if (remainingText[j] === '*' && remainingText[j + 1] === '*') {
+            if (currentBoldText) {
+              textParts.push({
+                type: 'text',
+                text: currentBoldText,
+                marks: inBoldSection ? [{ type: 'bold' }] : []
+              });
+              currentBoldText = '';
+            }
+            inBoldSection = !inBoldSection;
+            j++;
+          } else {
+            currentBoldText += remainingText[j];
+          }
         }
+        
+        if (currentBoldText) {
+          textParts.push({
+            type: 'text',
+            text: currentBoldText,
+            marks: inBoldSection ? [{ type: 'bold' }] : []
+          });
+        }
+        
+        parts.push(...textParts);
       }
 
       if (parts.length > 0) {
+        // 添加段落换行，但不在代码块内添加
+        if (!inCode) {
+          parts.push({ type: 'paragraph' });
+        }
         content.push({
           type: 'paragraph',
           content: parts
