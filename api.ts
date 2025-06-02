@@ -107,14 +107,28 @@ export function markdownToNoteAtom(title: string, markdown: string): { content: 
   });
   let inQuote = false;
   let quoteBuffer = [];
+  let inFrontmatter = false;
+  let inCode = false;
 
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i].trim();
 
+    // 处理 frontmatter
+    if (line === '---') {
+      inFrontmatter = !inFrontmatter;
+      continue;
+    }
+    if (inFrontmatter) {
+      continue;
+    }
+    if (line === '```') {
+      inCode = !inCode;
+    }
+
     // 1. 引用块
-    if (line.startsWith('>[!quote]')) {
+    if (line.startsWith('>')) {
       inQuote = true;
-      quoteBuffer.push(line.replace('>[!quote]', '').trim());
+      quoteBuffer.push(line.replace('[!quote] 一言', '').trim());
       continue;
     }
     if (inQuote && (line.startsWith('>') || line === '')) {
@@ -135,7 +149,6 @@ export function markdownToNoteAtom(title: string, markdown: string): { content: 
       });
       quoteBuffer = [];
       inQuote = false;
-      // 继续处理当前行
     }
 
     // 2. 图片
@@ -170,17 +183,47 @@ export function markdownToNoteAtom(title: string, markdown: string): { content: 
       continue;
     }
 
-    // 4. 普通段落，过滤 noteId 行
-    if (line !== '' && !line.includes('noteId')) {
-      content.push({
-        type: 'paragraph',
-        content: [
-          {
-            type: 'text',
-            text: line + '\n\n'
+    // 4. 处理加粗文本
+    if (line !== '') {
+      const parts = [];
+      let currentText = '';
+      let inBold = false;
+      
+      for (let j = 0; j < line.length; j++) {
+        if (line[j] === '*' && line[j + 1] === '*') {
+          if (currentText) {
+            parts.push({
+              type: 'text',
+              text: currentText,
+              marks: inBold ? [{ type: 'bold' }] : []
+            });
+            currentText = '';
           }
-        ]
-      });
+          inBold = !inBold;
+          j++; // 跳过下一个 *
+        } else {
+          currentText += line[j];
+        }
+      }
+      
+      if (currentText) {
+        parts.push({
+          type: 'text',
+          text: currentText,
+          marks: inBold ? [{ type: 'bold' }] : []
+        });
+        // 补充一个段落换行
+        if (!inCode) {
+          parts.push({ type: 'paragraph' });
+        }
+      }
+
+      if (parts.length > 0) {
+        content.push({
+          type: 'paragraph',
+          content: parts
+        });
+      }
     }
   }
 
