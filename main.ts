@@ -35,6 +35,7 @@ class MowenPublishModal extends Modal {
 
 		new Setting(contentEl)
 			.setName('标题')
+			.setDesc('发布到墨问后的笔记标题，会自动加粗')
 			.addText((text) => {
 				titleInput = text;
 				text.setValue(this.title).onChange((value) => {
@@ -43,7 +44,8 @@ class MowenPublishModal extends Modal {
 			});
 
 		new Setting(contentEl)
-			.setName('标签（可选，逗号分隔）')
+			.setName('标签')
+			.setDesc('可选，逗号分隔，发布到墨问后的笔记标签，会自动增加一个Obsidian标签')
 			.addText((text) => {
 				tagInput = text;
 				text.setValue(this.tags).onChange((value) => {
