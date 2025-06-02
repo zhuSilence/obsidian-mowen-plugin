@@ -1,11 +1,11 @@
 {
 	"id": "obsidian-mowen-plugin",
 	"name": "Obsidian Mowen Plugin",
-	"version": "0.0.3",
+	"version": "0.0.4",
 	"minAppVersion": "0.15.0",
 	"description": "Demonstrates some of the capabilities of the Obsidian API.",
 	"author": "ziyou",
-	"authorUrl": "https://obsidian.md",
+	"authorUrl": "https://github.com/zhuSilence/obsidian-mowen-plugin",
 	"fundingUrl": "https://obsidian.md/pricing",
 	"isDesktopOnly": false
 }

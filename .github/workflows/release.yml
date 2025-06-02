@@ -5,6 +5,10 @@ on:
     tags:
       - "*"
 
+permissions:
+  contents: write
+  packages: write
+
 env:
   PLUGIN_NAME: obsidian-mowen-plugin # Change this to match the id of your plugin.
 
