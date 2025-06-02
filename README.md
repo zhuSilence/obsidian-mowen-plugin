@@ -39,3 +39,11 @@
 ## 使用说明
 找到本地 Obsidian 笔记文件夹位置，在.obsidian/plugin 文件夹下创建一个名称为 obsidian-mowen-plugin 的文件夹，将页面 https://github.com/zhuSilence/obsidian-mowen-plugin/releases/tag/0.0.1 上的 main.js,style.css,manifest.json 三个文件下载下来，放到刚刚创建的 obsidian-mowen-plugin 文件夹中。
 [](1.png)
+
+下载安装成功过后，在 Obsidian 的设置中，找到插件管理，点击插件管理，找到 obsidian-mowen-plugin 进行启用，然后在设置中配置墨问的 API KEY，在这里也可以配置是否默认开启自动发布功能。
+[](2.png)
+[](3.png)
+
+打开一篇已经写好的笔记，然后再打开命令板输入 mowen 可以看到发布选项
+[](4.png)
+[](5.png)
