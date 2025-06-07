@@ -127,26 +127,25 @@ export function markdownToNoteAtom(title: string, markdown: string): { content: 
 
     // 1. 引用块
     if (line.startsWith('>')) {
+      //  引用前加个空行
+      // content.push({type: 'paragraph'});
       inQuote = true;
-      quoteBuffer.push(line.replace('[!quote] 一言', '').trim());
-      continue;
-    }
-    if (inQuote && (line.startsWith('>') || line === '')) {
       quoteBuffer.push(line.replace(/^>/, '').trim());
       continue;
     }
     if (inQuote && !line.startsWith('>')) {
       // 结束引用
       content.push({
-        type: 'paragraph',
+        type: 'quote',
         content: [
           {
             type: 'text',
-            text: quoteBuffer.join('\n'),
-            marks: [{ type: 'quote' }]
+            text: quoteBuffer.join('\n')
           }
         ]
       });
+      // 引用后添加空行
+      content.push({type: 'paragraph'});
       quoteBuffer = [];
       inQuote = false;
     }
