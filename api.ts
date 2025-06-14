@@ -5,7 +5,8 @@ export interface PublishNoteParams {
   content: string;
   tags?: string[];
   autoPublish?: boolean;
-  settings?: any
+  settings?: any;
+  body: any[];
 }
 
 export interface PublishNoteResult {
@@ -16,7 +17,7 @@ export interface PublishNoteResult {
 // 
 const baseUrl = "https://open.mowen.cn/api/open/api/v1";
 export async function publishNoteToMowen(params: PublishNoteParams): Promise<PublishNoteResult> {
-  const { noteId, apiKey, title, content, tags, autoPublish, settings } = params;
+  const { noteId, apiKey, title, content, tags, autoPublish, settings, body } = params;
   let url;
   if (noteId) {
     // 更新笔记 path 为 /api/open/api/v1/note/edit
@@ -25,7 +26,6 @@ export async function publishNoteToMowen(params: PublishNoteParams): Promise<Pub
     // 创建笔记 path 为 /api/open/api/v1/note/create
     url = `${baseUrl}/note/create`;
   }
-  const newObject = markdownToNoteAtom(title, content);
   try {
     const response = await fetch(url, {
       method: "POST",
@@ -37,12 +37,9 @@ export async function publishNoteToMowen(params: PublishNoteParams): Promise<Pub
         "noteId": noteId,
         "body": {
           "type": "doc",
-          "content": newObject.content,
+          "content": body,
         },
-        "settings": {
-          "autoPublish": autoPublish,
-          "tags": tags
-        }
+        "settings": settings
       }),
     });
 
@@ -51,7 +48,7 @@ export async function publishNoteToMowen(params: PublishNoteParams): Promise<Pub
     //  result.noteId 不等于空时发布成功
     if (response.ok && result.noteId !== "") {
       // 发布成功的情况下，根据 settings 的内容进行笔记的隐私设置
-      console.log(settings)
+      // console.log(settings)
       if (settings.section === 1) {
         // 调用更新 settings path /api/open/api/v1/note/set
         let settingResponse = await fetch(baseUrl + `/note/set`, {
@@ -69,7 +66,7 @@ export async function publishNoteToMowen(params: PublishNoteParams): Promise<Pub
           })
         });
         const settingResult = await settingResponse.json();
-        console.log("setting Result " + settingResult);
+        // console.log("setting Result " + settingResult);
       }
       return {
         success: true,
@@ -88,6 +85,70 @@ export async function publishNoteToMowen(params: PublishNoteParams): Promise<Pub
       success: false,
       message: error.message || "网络错误",
     };
+  }
+}
+
+/**
+ * 获取文件上传授权信息
+ * @param {string} apiKey - 墨问 API Key
+ * @returns {Promise<any>} 上传授权信息
+ */
+export async function getUploadAuthorization(apiKey: string, fileType: number): Promise<any> {
+  try {
+    const response = await fetch(`${baseUrl}/upload/prepare`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        fileType: fileType
+        // 根据文档，这里可能需要传入文件类型、文件名等，但目前文档中没有明确要求，先留空
+      }),
+    });
+    const result = await response.json();
+    // console.log(result)
+    if (response.ok && result.form) {
+      return { success: true, data: result.form };
+    } else {
+      return { success: false, message: result.msg || "获取上传授权失败", data: result };
+    }
+  } catch (error: any) {
+    return { success: false, message: error.message || "网络错误" };
+  }
+}
+
+/**
+ * 执行文件投递上传
+ * @param {string} endpoint - 上传端点
+ * @param {any} authInfo - 授权信息
+ * @param {Blob} fileBlob - 文件内容的 Blob
+ * @param {string} fileName - 文件名
+ * @returns {Promise<any>} 上传结果
+ */
+export async function deliverFile(endpoint: string, authInfo: any, fileBlob: Blob, fileName: string): Promise<any> {
+  const formData = new FormData();
+  // 根据文档，将授权信息添加到 formData
+  for (const key in authInfo) {
+    formData.append(key, authInfo[key]);
+  }
+  formData.append('file', fileBlob, fileName); // 投递文件
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      body: formData,
+      redirect: 'follow'
+      // 注意：这里不需要设置 Content-Type，FormData 会自动设置
+    });
+    const result = await response.json();
+    if (response.ok && result.file) { // 假设成功返回 uuid
+      return { success: true, data: result.file };
+    } else {
+      return { success: false, message: result.msg || "文件上传失败", data: result };
+    }
+  } catch (error: any) {
+    return { success: false, message: error.message || "网络错误" };
   }
 }
 
@@ -344,4 +405,39 @@ export function markdownTagsToNoteAtomTags(markdown: string): { tags: string[] }
   return {
     tags: tags
   };
+}
+
+/**
+ * 根据文件扩展名获取文件类型
+ * @param {string} extension - 文件扩展名
+ * @returns {number} 文件类型：1-图片 2-音频 3-PDF
+ */
+export function getFileType(extension: string): number {
+  return {
+    'png': 1,
+    'jpg': 1,
+    'jpeg': 1,
+    'gif': 1,
+    'mp3': 2,
+    'mp4': 2,
+    'pdf': 3
+  }[extension.toLowerCase()] || 1;
+}
+
+/**
+ * 根据文件扩展名获取 MIME 类型
+ * @param {string} extension - 文件扩展名
+ * @returns {string} MIME 类型
+ */
+export function getMimeType(extension: string): string {
+  const mimeTypes: { [key: string]: string } = {
+    'png': 'image/png',
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'gif': 'image/gif',
+    'mp3': 'audio/mpeg',
+    'mp4': 'video/mp4',
+    'pdf': 'application/pdf',
+  };
+  return mimeTypes[extension.toLowerCase()] || 'application/octet-stream';
 }

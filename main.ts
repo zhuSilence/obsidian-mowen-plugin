@@ -1,6 +1,7 @@
-import { App, Editor, MarkdownView, Notice, Plugin, PluginSettingTab, Setting, Menu, TextComponent, Modal } from 'obsidian';
+import { App, Editor, MarkdownView, Notice, Plugin, PluginSettingTab, Setting, Menu, TextComponent, Modal, TFile } from 'obsidian';
 import { MowenSettingTab, DEFAULT_SETTINGS, MowenPluginSettings } from "./settings";
-import { publishNoteToMowen, markdownToNoteAtom, markdownTagsToNoteAtomTags } from "./api";
+import { publishNoteToMowen, markdownTagsToNoteAtomTags, getUploadAuthorization, deliverFile, getFileType, getMimeType } from "./api";
+import * as yaml from 'js-yaml';
 
 // 发布弹窗 Modal
 class MowenPublishModal extends Modal {
@@ -8,6 +9,8 @@ class MowenPublishModal extends Modal {
 	title: string;
 	tags: string;
 	autoPublish: boolean;
+	plugin: MowenPlugin; // 添加插件实例
+	initialLoadDone: boolean = false; // 添加标志，控制是否已经初始化
 	section: number = 0;
 	privacy: 'public' | 'private' | 'rule' = 'public';
 	noShare: boolean = false;
@@ -15,18 +18,44 @@ class MowenPublishModal extends Modal {
 
 	onSubmit: (title: string, tags: string, autoPublish: boolean, settings: any) => void;
 
-	constructor(app: App, content: string, title: string, tags: string, autoPublish: boolean, onSubmit: (title: string, tags: string, autoPublish: boolean, settings: any) => void) {
-		const newTags = markdownTagsToNoteAtomTags(content);
+	constructor(app: App, content: string, title: string, plugin: MowenPlugin, onSubmit: (title: string, tags: string, autoPublish: boolean, settings: any) => void) {
 		super(app);
 		this.content = content;
 		this.title = title;
-		this.tags = newTags.tags.join(',');
-		this.autoPublish = autoPublish;
+		this.plugin = plugin; // 保存插件实例
 		this.onSubmit = onSubmit;
 	}
 
-	onOpen() {
+	async onOpen() {
 		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.createEl('h2', { text: '发布到墨问' });
+
+		// 只有在首次打开时才加载现有设置
+		if (!this.initialLoadDone) {
+			const loadedSettings = await this.plugin.getSettingsFromFrontmatter();
+			console.log('Loaded Settings:', loadedSettings);
+
+			// 使用加载的设置（如果存在）初始化模态框的状态
+			this.tags = loadedSettings.tags ? loadedSettings.tags : markdownTagsToNoteAtomTags(this.content).tags.join(',');
+			this.autoPublish = typeof loadedSettings.autoPublish !== 'undefined' ? loadedSettings.autoPublish : this.plugin.settings.autoPublish;
+			this.section = loadedSettings.privacy ? 1 : 0;
+			if (loadedSettings.privacy) {
+				this.privacy = loadedSettings.privacy.type;
+				if (loadedSettings.privacy.rule) {
+					this.noShare = loadedSettings.privacy.rule.noShare;
+					this.expireAt = loadedSettings.privacy.rule.expireAt;
+				}
+			}
+			this.initialLoadDone = true; // 标记为已完成初始加载
+		}
+
+		this.renderSettings(); // 渲染设置
+	}
+
+	private renderSettings() {
+		const { contentEl } = this;
+		// 清除之前渲染的设置，以便重新渲染
 		contentEl.empty();
 		contentEl.createEl('h2', { text: '发布到墨问' });
 
@@ -72,8 +101,7 @@ class MowenPublishModal extends Modal {
 			.addToggle(toggle => {
 				toggle.setValue(this.section === 1).onChange(value => {
 					this.section = value ? 1 : 0;
-					this.onClose();
-					this.onOpen();
+					this.renderSettings(); // 只重新渲染设置部分
 				});
 			});
 
@@ -84,12 +112,11 @@ class MowenPublishModal extends Modal {
 				.addDropdown(drop => {
 					drop.addOption('public', '公开');
 					drop.addOption('private', '私有');
-					drop.addOption('rule', '规则');
+					drop.addOption('rule', '规则');					
 					drop.setValue(this.privacy);
 					drop.onChange(value => {
 						this.privacy = value as 'public' | 'private' | 'rule';
-						this.onClose();
-						this.onOpen();
+						this.renderSettings(); // 只重新渲染设置部分
 					});
 				});
 		}
@@ -168,7 +195,7 @@ export default class MowenPlugin extends Plugin {
 							.setTitle('Publish to Mowen')
 							.setIcon('upload')
 							.onClick(() => {
-								new MowenPublishModal(this.app, selectedText, '', '', this.settings.autoPublish, async (title, tags, autoPublish, settings) => {
+								new MowenPublishModal(this.app, selectedText, '', this, async (title, tags, autoPublish, settings) => {
 									await this.publishToMowen(title, selectedText, tags, autoPublish, settings);
 								}).open();
 							});
@@ -192,7 +219,7 @@ export default class MowenPlugin extends Plugin {
 						}
 						const content = markdownView.editor.getValue();
 						const title = file.basename;
-						new MowenPublishModal(this.app, content, title, '', this.settings.autoPublish, async (newTitle, tags, autoPublish, settings) => {
+						new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings) => {
 							await this.publishToMowen(newTitle, content, tags, autoPublish, settings);
 						}).open();
 					}
@@ -214,6 +241,251 @@ export default class MowenPlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
+	/**
+	 * 将 Markdown 文本转换为 NoteAtom 结构
+	 * @param {string} markdown - Markdown 文本
+	 * @param {string} title - 笔记标题
+	 * @returns {Promise<{ content: any[] }>} NoteAtom 结构
+	 */
+	async markdownToNoteAtom(title: string, markdown: string): Promise<{ content: any[] }> {
+		const lines = markdown.split('\n');
+		const content = [];
+		content.push({
+			type: 'paragraph',
+			content: [
+				{ type: 'text', text: title, marks: [{ type: 'bold' }] }
+			]
+		});
+		// title 后面增加一个空行
+		content.push({ type: 'paragraph' }); // 引用后添加空行
+		let inQuote = false;
+		let quoteBuffer = [];
+		let inFrontmatter = false;
+		let inCode = false;
+
+		for (let i = 0; i < lines.length; i++) {
+			let line = lines[i].trim();
+
+			// 处理 frontmatter
+			if (line === '---') {
+				inFrontmatter = !inFrontmatter;
+				continue;
+			}
+			if (inFrontmatter) {
+				continue;
+			}
+			if (line === '```') {
+				inCode = !inCode;
+				continue; // 跳过代码块的三个反引号行
+			}
+			if (inCode) {
+				// 如果在代码块内，直接添加为普通文本
+				content.push({
+					type: 'paragraph',
+					content: [{ type: 'text', text: line + '\n' }] // 代码块内保持单行
+				});
+				continue;
+			}
+
+			// 1. 引用块
+			if (line.startsWith('>')) {
+				inQuote = true;
+				quoteBuffer.push(line.replace(/^>\s*/, '').trim()); // 移除 > 和可能的空格
+				continue;
+			}
+			// 检查是否还在引用块内（或者引用块结束）
+			if (inQuote && (line.startsWith('>') || line !== '')) {
+				quoteBuffer.push(line.replace(/^>\s*/, '').trim());
+				continue;
+			}
+			if (inQuote && !line.startsWith('>') && line === '') {
+				// 结束引用
+				content.push({
+					type: 'quote',
+					content: [
+						{
+							type: 'text',
+							text: quoteBuffer.join('\n')
+						}
+					]
+				});
+				content.push({ type: 'paragraph' }); // 引用后添加空行
+				quoteBuffer = [];
+				inQuote = false;
+			}
+
+			// 2. 图片
+			const imgMatch = line.match(/^!\[\[(.+?)\]\]/);
+			if (imgMatch) {
+				const imageName = imgMatch[1]; // 获取到的只是文件名，例如 "file-20250612224955426.png"
+
+				let imageFile: TFile | null = null;
+				let fullImagePath = imageName; // 用于通知和日志，如果找不到完整路径就用文件名
+
+				// 尝试获取当前活动的Markdown文件（即当前正在编辑的笔记）
+				const currentMarkdownFile = this.app.workspace.getActiveFile();
+
+				if (currentMarkdownFile) {
+					// 策略1: 检查图片是否在当前笔记所在的文件夹
+					const currentFolder = currentMarkdownFile.parent?.path;
+					if (currentFolder) {
+						const potentialPath = `${currentFolder}/${imageName}`;
+						const file = this.app.vault.getAbstractFileByPath(potentialPath);
+						if (file instanceof TFile) {
+							imageFile = file;
+							fullImagePath = potentialPath;
+						}
+					}
+				}
+
+				// 策略2: 如果策略1失败，尝试在整个vault中按文件名查找
+				if (!imageFile) {
+					const allFiles = this.app.vault.getFiles();
+					for (const file of allFiles) {
+						if (file.name === imageName) {
+							imageFile = file;
+							fullImagePath = file.path;
+							break;
+						}
+					}
+				}
+
+				if (imageFile instanceof TFile) { // 确保 imageFile 确实是一个 TFile 实例
+					new Notice(`正在上传图片: ${fullImagePath}`);
+					const mimeType = getMimeType(imageFile.extension);
+					const fileBlob = new Blob([await this.app.vault.readBinary(imageFile)], { type: mimeType });
+					const fileName = imageFile.name; // 确保文件名正确
+					// 将文件扩展转换成对应的整型，1-图片 2-音频 3-PDF
+					const fileType = getFileType(imageFile.extension);
+					const authRes = await getUploadAuthorization(this.settings.apiKey, fileType);
+					if (authRes.success && authRes.data.endpoint) {
+						// 确保 authRes.data 包含 $content-type，因为墨问的策略可能会检查这个表单字段
+						const uploadRes = await deliverFile(authRes.data.endpoint, authRes.data, fileBlob, fileName);
+						// console.log('uploadRes', uploadRes);
+						if (uploadRes.success && uploadRes.data) {
+							content.push({
+								type: 'image',
+								attrs: {
+									// href: uploadRes.data.url,
+									uuid: uploadRes.data.fileId,
+									align: 'center', // 默认居中
+									alt: fileName // 使用文件名作为 alt 文本
+								}
+							});
+							new Notice(`图片上传成功: ${fileName}`);
+						} else {
+							new Notice(`图片上传失败: ${fileName} - ${uploadRes.message}`);
+							// 上传失败，仍将图片路径作为文本插入
+							content.push({
+								type: 'paragraph',
+								content: [{ type: 'text', text: `![[${imageName}]]` }]
+							});
+						}
+					} else {
+						new Notice(`获取图片上传授权失败: ${authRes.message}`);
+						// 获取授权失败，仍将图片路径作为文本插入
+						content.push({
+							type: 'paragraph',
+							content: [{ type: 'text', text: `![[${imageName}]]` }]
+						});
+					}
+				} else {
+					new Notice(`图片文件未找到或不是文件: ${imageName}. 检查路径: ${fullImagePath}`); // 优化通知
+					// 文件未找到，仍将图片路径作为文本插入
+					content.push({
+						type: 'paragraph',
+						content: [{ type: 'text', text: `![[${imageName}]]` }]
+					});
+				}
+				continue;
+			}
+
+			// 3. 标题
+			const headingMatch = line.match(/^(#+)\s*(.+)$/);
+			if (headingMatch) {
+				content.push({
+					type: 'paragraph',
+					content: [
+						{
+							type: 'text',
+							text: '\n' + headingMatch[2] + '\n',
+							marks: [{ type: 'bold' }] // 标题默认加粗
+						}
+					]
+				});
+				continue;
+			}
+
+			// 4. 处理普通文本（包括加粗和链接）
+			if (line !== '') {
+				const parts = [];
+				const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+				let lastIndex = 0;
+				let match;
+
+				while ((match = linkRegex.exec(line)) !== null) {
+					// 处理链接前的普通文本
+					if (match.index > lastIndex) {
+						const textBeforeLink = line.slice(lastIndex, match.index);
+						this.processBoldText(textBeforeLink, parts);
+					}
+					// 处理链接
+					parts.push({
+						type: 'text',
+						text: match[1],
+						marks: [{ type: 'link', attrs: { href: match[2] } }]
+					});
+					lastIndex = match.index + match[0].length;
+				}
+
+				// 处理链接后的剩余文本
+				if (lastIndex < line.length) {
+					const remainingText = line.slice(lastIndex);
+					this.processBoldText(remainingText, parts);
+				}
+
+				if (parts.length > 0) {
+					content.push({
+						type: 'paragraph',
+						content: parts
+					});
+					content.push({ type: 'paragraph' }); // 添加段落换行
+				}
+			}
+		}
+
+		return { content: content };
+	}
+
+	// 辅助函数：处理加粗文本，被 markdownToNoteAtom 调用
+	processBoldText(textSegment: string, partsArray: any[]) {
+		let currentText = '';
+		let inBold = false;
+		for (let j = 0; j < textSegment.length; j++) {
+			if (textSegment[j] === '*' && textSegment[j + 1] === '*') {
+				if (currentText) {
+					partsArray.push({
+						type: 'text',
+						text: currentText,
+						marks: inBold ? [{ type: 'bold' }] : []
+					});
+					currentText = '';
+				}
+				inBold = !inBold;
+				j++; // 跳过下一个 *
+			} else {
+				currentText += textSegment[j];
+			}
+		}
+		if (currentText) {
+			partsArray.push({
+				type: 'text',
+				text: currentText,
+				marks: inBold ? [{ type: 'bold' }] : []
+			});
+		}
+	}
+
 	async publishToMowen(title: string, content: string, tags: string, autoPublish: boolean, settings: any) {
 		const apiKey = this.settings.apiKey;
 		if (!apiKey) {
@@ -223,55 +495,131 @@ export default class MowenPlugin extends Plugin {
 		const tagArr = tags.split(',').map(t => t.trim()).filter(Boolean);
 		new Notice('正在发布到墨问...');
 		const noteId = await this.getNoteIdFromFrontmatter();
+		settings.tags = tags;
+		// 在这里调用移动后的 markdownToNoteAtom
+		const noteBody = await this.markdownToNoteAtom(title, content);
+
 		const res = await publishNoteToMowen({
 			noteId,
 			apiKey,
-			title,
-			content,
+			title, // 实际API可能不需要 title，body里已经有了
+			content: '', // 内容通过 body 字段传递
 			tags: tagArr,
 			autoPublish,
-			settings
+			settings: {
+				auto_publish: autoPublish, // 确保字段名正确
+				tags: tagArr, // 确保字段名正确
+				privacy: {
+					type: settings.privacy.type,
+					rule: settings.privacy.rule
+				}
+			},
+			body: noteBody.content // 传递转换后的 NoteAtom 内容
 		});
-		if (res.success) {
+
+		if (res.success && res.data) {
 			new Notice('发布成功！');
-			await this.addNoteIdToFrontmatter(res.data);
+			await this.addNoteIdToFrontmatter(res.data, settings);
 		} else {
 			new Notice('发布失败：' + res.message);
 		}
 	}
 
-	async addNoteIdToFrontmatter(noteId: string) {
+	async addNoteIdToFrontmatter(noteId: string, settings: any) {
 		const activeFile = this.app.workspace.getActiveFile();
 		if (!activeFile) return;
 		const fileContent = await this.app.vault.read(activeFile);
 
 		// 检查是否已有 frontmatter
 		let newContent: string;
-		if (fileContent.startsWith('---')) {
-			// 替换或添加 noteId 字段
-			newContent = fileContent.replace(
-				/(^\---[\s\S]*?---)/,
-				(match: string) => {
-					console.log('匹配到 frontmatter:', match);
-					if (/noteId:/.test(match)) {
-						// 已有 noteId，替换
-						console.log('替换现有 noteId');
-						return match.replace(/noteId:.*$/, `noteId: ${noteId}`);
-					} else {
-						// 没有 noteId，添加
-						console.log('添加新的 noteId');
-						return match.replace(/---$/, `noteId: ${noteId}\n---`);
-					}
-				}
-			);
-		} else {
-			// 没有 frontmatter，添加
-			console.log('文件没有 frontmatter，创建新的 frontmatter');
-			newContent = `---\nnoteId: ${noteId}\n---\n${fileContent}`;
+		let frontmatterMatch = fileContent.match(/(^---[\s\S]*?---)/);
+		let currentFrontmatter = '';
+		let contentWithoutFrontmatter = fileContent;
+
+		if (frontmatterMatch) {
+			currentFrontmatter = frontmatterMatch[1];
+			contentWithoutFrontmatter = fileContent.substring(frontmatterMatch[0].length);
 		}
 
-		console.log('新内容:', newContent);
+		let frontmatterObj: any = {};
+		if (currentFrontmatter) {
+			// 移除 '---' 边界，解析 YAML
+			const yamlContent = currentFrontmatter.replace(/^---\n|\n---$/g, '');
+			try {
+				frontmatterObj = yaml.load(yamlContent) || {};
+			} catch (e) {
+				console.error('解析现有 frontmatter 失败:', e);
+				// 如果解析失败，则按原样保留现有 frontmatter，只添加 noteId 和新设置
+				frontmatterObj = {};
+			}
+		}
+
+		// 更新或添加 noteId
+		frontmatterObj.noteId = noteId;
+
+		// 更新或添加其他设置
+		if (settings) {
+			console.log('更新或添加其他设置:', settings);
+			if (settings.tags) {
+				frontmatterObj.mowenTags = settings.tags; // 使用单独的字段避免与 Obsidian 自身标签冲突
+			}
+			if (typeof settings.auto_publish !== 'undefined') {
+				frontmatterObj.mowenAutoPublish = settings.auto_publish;
+			}
+			if (settings.privacy) {
+				frontmatterObj.mowenPrivacyType = settings.privacy.type;
+				if (settings.privacy.rule) {
+					frontmatterObj.mowenPrivacyNoShare = settings.privacy.rule.noShare;
+					frontmatterObj.mowenPrivacyExpireAt = settings.privacy.rule.expireAt;
+				}
+			}
+		}
+
+		// 重新序列化为 YAML 字符串
+		const updatedYaml = yaml.dump(frontmatterObj);
+		newContent = `---\n${updatedYaml}---\n${contentWithoutFrontmatter.trim()}`;
+
 		await this.app.vault.modify(activeFile, newContent);
+	}
+
+	async getSettingsFromFrontmatter(): Promise<any> {
+		const activeFile = this.app.workspace.getActiveFile();
+		if (!activeFile) return {};
+		const fileContent = await this.app.vault.read(activeFile);
+
+		let frontmatterMatch = fileContent.match(/(^---[\s\S]*?---)/);
+		let frontmatterObj: any = {};
+
+		if (frontmatterMatch) {
+			const yamlContent = frontmatterMatch[1].replace(/^---\n|\n---$/g, '');
+			try {
+				frontmatterObj = yaml.load(yamlContent) || {};
+			} catch (e) {
+				console.error('解析现有 frontmatter 失败:', e);
+				return {};
+			}
+		}
+
+		const loadedSettings: any = {};
+		// 加载标签
+		if (frontmatterObj.mowenTags) {
+			loadedSettings.tags = frontmatterObj.mowenTags;
+		}
+		// 加载自动发布
+		if (typeof frontmatterObj.mowenAutoPublish !== 'undefined') {
+			loadedSettings.autoPublish = frontmatterObj.mowenAutoPublish;
+		}
+		// 加载隐私设置
+		if (frontmatterObj.mowenPrivacyType) {
+			loadedSettings.privacy = {
+				type: frontmatterObj.mowenPrivacyType,
+				rule: {
+					noShare: frontmatterObj.mowenPrivacyNoShare || false,
+					expireAt: frontmatterObj.mowenPrivacyExpireAt || 0,
+				}
+			};
+		}
+		return loadedSettings;
 	}
 
 	/**
