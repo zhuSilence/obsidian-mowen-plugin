@@ -494,7 +494,8 @@ export default class MowenPlugin extends Plugin {
 		}
 		const tagArr = tags.split(',').map(t => t.trim()).filter(Boolean);
 		new Notice('正在发布到墨问...');
-		const noteId = await this.getNoteIdFromFrontmatter();
+		const noteId = await this.getNoteIdFromFrontmatter(content);
+		alert(noteId)
 		settings.tags = tags;
 		// 在这里调用移动后的 markdownToNoteAtom
 		const noteBody = await this.markdownToNoteAtom(title, content);
@@ -626,11 +627,11 @@ export default class MowenPlugin extends Plugin {
 	 * 从 frontmatter 中获取 noteId，存在则更新笔记，不存在则创建笔记
 	 * @returns {string | null}
 	 */
-	async getNoteIdFromFrontmatter(): Promise<string | null> {
-		const activeFile = this.app.workspace.getActiveFile();
-		if (!activeFile) return null;
-		const fileContent = await this.app.vault.read(activeFile);
-		const match = fileContent.match(/noteId:\s*(\S+)/);
+	async getNoteIdFromFrontmatter(content: string): Promise<string | null> {
+		// const activeFile = this.app.workspace.getActiveFile();
+		// if (!activeFile) return null;
+		// const fileContent = await this.app.vault.read(activeFile);
+		const match = content.match(/noteId:\s*(\S+)/);
 		return match ? match[1] : null;
 	}
 }
