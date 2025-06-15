@@ -495,7 +495,6 @@ export default class MowenPlugin extends Plugin {
 		const tagArr = tags.split(',').map(t => t.trim()).filter(Boolean);
 		new Notice('正在发布到墨问...');
 		const noteId = await this.getNoteIdFromFrontmatter(content);
-		alert(noteId)
 		settings.tags = tags;
 		// 在这里调用移动后的 markdownToNoteAtom
 		const noteBody = await this.markdownToNoteAtom(title, content);
