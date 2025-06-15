@@ -205,6 +205,26 @@ export default class MowenPlugin extends Plugin {
 		);
 
 		// 文章菜单：整篇发布到墨问
+		this.registerEvent(
+			this.app.workspace.on('file-menu', (menu, file) => {
+				if (file instanceof TFile && file.extension === 'md') {
+					menu.addItem((item) => {
+						item
+							.setTitle('Publish to Mowen')
+							.setIcon('upload') // 你可以选择合适的图标
+							.onClick(async () => {
+								const content = await this.app.vault.read(file);
+								const title = file.basename;
+								new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings) => {
+									await this.publishToMowen(newTitle, content, tags, autoPublish, settings);
+								}).open();
+							});
+					});
+				}
+			})
+		);
+
+		// 命令面板：整篇发布到墨问
 		this.addCommand({
 			id: 'publish-current-file-to-mowen',
 			name: 'Publish to Mowen',
