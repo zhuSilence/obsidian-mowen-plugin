@@ -249,6 +249,31 @@ export default class MowenPlugin extends Plugin {
 			}
 		});
 
+		// 命令面板：选中内容发布到墨问
+		this.addCommand({
+			id: 'publish-current-selected-text-to-mowen',
+			name: 'Publish Selected Text to Mowen',
+			checkCallback: (checking: boolean) => {
+				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
+				if (markdownView) {
+					if (!checking) {
+						const file = markdownView.file;
+						if (!file) {
+							new Notice('未找到当前笔记文件');
+							return;
+						}
+						const content = markdownView.editor.getSelection();
+						const title = file.basename;
+						new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings) => {
+							await this.publishToMowen(newTitle, content, tags, autoPublish, settings);
+						}).open();
+					}
+					return true;
+				}
+				return false;
+			}
+		});
+
 		// 设置页
 		this.addSettingTab(new MowenSettingTab(this.app, this));
 	}
