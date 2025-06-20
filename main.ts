@@ -192,11 +192,11 @@ export default class MowenPlugin extends Plugin {
 				if (selectedText && selectedText.length > 0) {
 					menu.addItem((item) => {
 						item
-							.setTitle('Publish to Mowen')
+							.setTitle('Publish Selected Text to Mowen')
 							.setIcon('upload')
 							.onClick(() => {
 								new MowenPublishModal(this.app, selectedText, '', this, async (title, tags, autoPublish, settings) => {
-									await this.publishToMowen(title, selectedText, tags, autoPublish, settings);
+									await this.publishToMowen(title, selectedText, tags, autoPublish, settings, false);
 								}).open();
 							});
 					});
@@ -216,7 +216,7 @@ export default class MowenPlugin extends Plugin {
 								const content = await this.app.vault.read(file);
 								const title = file.basename;
 								new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings) => {
-									await this.publishToMowen(newTitle, content, tags, autoPublish, settings);
+									await this.publishToMowen(newTitle, content, tags, autoPublish, settings, true);
 								}).open();
 							});
 					});
@@ -240,7 +240,7 @@ export default class MowenPlugin extends Plugin {
 						const content = markdownView.editor.getValue();
 						const title = file.basename;
 						new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings) => {
-							await this.publishToMowen(newTitle, content, tags, autoPublish, settings);
+							await this.publishToMowen(newTitle, content, tags, autoPublish, settings, true);
 						}).open();
 					}
 					return true;
@@ -265,7 +265,7 @@ export default class MowenPlugin extends Plugin {
 						const content = markdownView.editor.getSelection();
 						const title = file.basename;
 						new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings) => {
-							await this.publishToMowen(newTitle, content, tags, autoPublish, settings);
+							await this.publishToMowen(newTitle, content, tags, autoPublish, settings, false);
 						}).open();
 					}
 					return true;
@@ -531,7 +531,7 @@ export default class MowenPlugin extends Plugin {
 		}
 	}
 
-	async publishToMowen(title: string, content: string, tags: string, autoPublish: boolean, settings: any) {
+	async publishToMowen(title: string, content: string, tags: string, autoPublish: boolean, settings: any, writeNoteIdToFrontmatter: boolean = true) {
 		const apiKey = this.settings.apiKey;
 		if (!apiKey) {
 			new Notice('请先在设置中填写 API-KEY');
@@ -564,7 +564,9 @@ export default class MowenPlugin extends Plugin {
 
 		if (res.success && res.data) {
 			new Notice('发布成功！');
-			await this.addNoteIdToFrontmatter(res.data, settings);
+			if (writeNoteIdToFrontmatter) {
+				await this.addNoteIdToFrontmatter(res.data, settings);
+			}
 		} else {
 			new Notice('发布失败：' + res.message);
 		}
