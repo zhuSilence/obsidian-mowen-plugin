@@ -53,6 +53,17 @@ class MowenPublishModal extends Modal {
 		this.renderSettings(); // 渲染设置
 	}
 
+	// 工具方法：去除 YAML frontmatter
+	private stripFrontmatter(content: string): string {
+		if (content.startsWith('---')) {
+			const end = content.indexOf('\n---', 3);
+			if (end !== -1) {
+				return content.slice(end + 4).trimStart();
+			}
+		}
+		return content;
+	}
+
 	private renderSettings() {
 		const { contentEl } = this;
 		// 清除之前渲染的设置，以便重新渲染
@@ -93,7 +104,12 @@ class MowenPublishModal extends Modal {
 
 		new Setting(contentEl)
 			.setName('内容')
-			.setDesc(this.content.length > 100 ? this.content.slice(0, 100) + '...' : this.content);
+			.setDesc(
+				(() => {
+					const preview = this.stripFrontmatter(this.content);
+					return preview.length > 100 ? preview.slice(0, 100) + '...' : preview;
+				})()
+			);
 
 		new Setting(contentEl)
 			.setName('隐私设置')
