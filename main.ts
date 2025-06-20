@@ -37,7 +37,7 @@ class MowenPublishModal extends Modal {
 			console.log('Loaded Settings:', loadedSettings);
 
 			// 使用加载的设置（如果存在）初始化模态框的状态
-			this.tags = loadedSettings.tags ? loadedSettings.tags : markdownTagsToNoteAtomTags(this.content).tags.join(',');
+			this.tags = loadedSettings.tags ? loadedSettings.tags : markdownTagsToNoteAtomTags(this.content, this.plugin.settings.defaultTag).tags.join(',');
 			this.autoPublish = typeof loadedSettings.autoPublish !== 'undefined' ? loadedSettings.autoPublish : this.plugin.settings.autoPublish;
 			this.section = loadedSettings.privacy ? 1 : 0;
 			if (loadedSettings.privacy) {

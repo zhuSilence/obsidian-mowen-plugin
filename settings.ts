@@ -4,11 +4,13 @@ import MowenPlugin from "./main";
 export interface MowenPluginSettings {
   apiKey: string;
   autoPublish: boolean;
+  defaultTag: string;
 }
 
 export const DEFAULT_SETTINGS: MowenPluginSettings = {
   apiKey: "",
   autoPublish: false,
+  defaultTag: "Obsidian",
 };
 
 export class MowenSettingTab extends PluginSettingTab {
@@ -45,6 +47,19 @@ export class MowenSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.autoPublish)
           .onChange(async (value) => {
             this.plugin.settings.autoPublish = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("默认标签")
+      .setDesc("发布时自动附加的默认标签（如 Obsidian）")
+      .addText(text =>
+        text
+          .setPlaceholder("Obsidian")
+          .setValue(this.plugin.settings.defaultTag)
+          .onChange(async (value) => {
+            this.plugin.settings.defaultTag = value;
             await this.plugin.saveSettings();
           })
       );

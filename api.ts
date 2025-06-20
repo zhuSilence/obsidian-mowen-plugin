@@ -358,7 +358,7 @@ export function markdownToNoteAtom(title: string, markdown: string): { content: 
  * @param {string} markdown
  * @returns {string[]}
  */
-export function markdownTagsToNoteAtomTags(markdown: string): { tags: string[] } {
+export function markdownTagsToNoteAtomTags(markdown: string, defaultTag: string = 'Obsidian'): { tags: string[] } {
   const lines = markdown.split('\n');
   let inYaml = false;
   let yamlLines = [];
@@ -400,8 +400,8 @@ export function markdownTagsToNoteAtomTags(markdown: string): { tags: string[] }
       }
     }
   }
-  // 在 tags 中添加 Obsidian
-  tags.push('Obsidian');
+  // 在 tags 中添加 defaultTag
+  tags.push(defaultTag);
   return {
     tags: tags
   };
