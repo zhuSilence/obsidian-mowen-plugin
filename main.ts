@@ -1,6 +1,7 @@
 import { App, Editor, MarkdownView, Notice, Plugin, PluginSettingTab, Setting, Menu, TextComponent, Modal, TFile } from 'obsidian';
 import { MowenSettingTab, DEFAULT_SETTINGS, MowenPluginSettings } from "./settings";
 import { publishNoteToMowen, markdownTagsToNoteAtomTags, getUploadAuthorization, deliverFile, getFileType, getMimeType } from "./api";
+import { generateNoteMetadata } from "./ai"; // 导入AI生成函数
 import * as yaml from 'js-yaml';
 
 // 发布弹窗 Modal
@@ -15,10 +16,11 @@ class MowenPublishModal extends Modal {
 	privacy: 'public' | 'private' | 'rule' = 'public';
 	noShare: boolean = false;
 	expireAt: number = 0;
+	summary: string | null = null; // 用于存储AI生成的摘要
 
-	onSubmit: (title: string, tags: string, autoPublish: boolean, settings: any) => void;
+	onSubmit: (title: string, tags: string, autoPublish: boolean, settings: any, summary: string | null) => void;
 
-	constructor(app: App, content: string, title: string, plugin: MowenPlugin, onSubmit: (title: string, tags: string, autoPublish: boolean, settings: any) => void) {
+	constructor(app: App, content: string, title: string, plugin: MowenPlugin, onSubmit: (title: string, tags: string, autoPublish: boolean, settings: any, summary: string | null) => void) {
 		super(app);
 		this.content = content;
 		this.title = title;
@@ -94,6 +96,45 @@ class MowenPublishModal extends Modal {
 			});
 
 		new Setting(contentEl)
+			.setName('AI 功能')
+			.setDesc('使用AI为当前笔记生成标题和标签')
+			.addButton(button => {
+				button
+					.setButtonText('✨ AI 生成')
+					.setCta()
+					.onClick(async () => {
+						button.setButtonText('正在生成...').setDisabled(true);
+						new Notice('AI 正在生成内容，请稍候...');
+
+						try {
+							const cleanContent = this.stripFrontmatter(this.content);
+							const result = await generateNoteMetadata(this.plugin.settings, cleanContent);
+
+							if (result) {
+								this.title = result.title;
+								const defaultTags = markdownTagsToNoteAtomTags(this.content, this.plugin.settings.defaultTag).tags;
+								const aiTags = result.tags || [];
+								const combinedTags = [...new Set([...defaultTags, ...aiTags])];
+								this.tags = combinedTags.join(',');
+
+								if (result.summary) {
+									this.summary = result.summary;
+									console.log('AI 生成的摘要:', this.summary);
+									new Notice('AI 生成成功，摘要已保存！');
+								} else {
+									this.summary = null;
+									new Notice('AI 生成成功！');
+								}
+								this.renderSettings();
+							}
+						} catch (error) {
+							console.error(error);
+							this.renderSettings(); // 即使失败也重绘，恢复按钮
+						}
+					});
+			});
+
+		new Setting(contentEl)
 			.setName('自动发布')
 			.setDesc('立即发布到墨问')
 			.addToggle(toggle => {
@@ -106,8 +147,11 @@ class MowenPublishModal extends Modal {
 			.setName('内容')
 			.setDesc(
 				(() => {
-					const preview = this.stripFrontmatter(this.content);
-					return preview.length > 100 ? preview.slice(0, 100) + '...' : preview;
+					let previewContent = this.stripFrontmatter(this.content);
+					if (this.summary) {
+						previewContent = `> ${this.summary}\n\n${previewContent}`;
+					}
+					return previewContent.length > 100 ? previewContent.slice(0, 100) + '...' : previewContent;
 				})()
 			);
 
@@ -187,7 +231,8 @@ class MowenPublishModal extends Modal {
 										expireAt: this.privacy === 'rule' ? this.expireAt : undefined
 									}
 								}
-							}
+							},
+							this.summary // 传递摘要
 						);
 						this.close();
 					})
@@ -211,8 +256,8 @@ export default class MowenPlugin extends Plugin {
 							.setTitle('Publish Selected Text to Mowen')
 							.setIcon('upload')
 							.onClick(() => {
-								new MowenPublishModal(this.app, selectedText, '', this, async (title, tags, autoPublish, settings) => {
-									await this.publishToMowen(title, selectedText, tags, autoPublish, settings, false);
+								new MowenPublishModal(this.app, selectedText, '', this, async (title, tags, autoPublish, settings, summary) => {
+									await this.publishToMowen(title, selectedText, tags, autoPublish, settings, false, summary);
 								}).open();
 							});
 					});
@@ -231,8 +276,8 @@ export default class MowenPlugin extends Plugin {
 							.onClick(async () => {
 								const content = await this.app.vault.read(file);
 								const title = file.basename;
-								new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings) => {
-									await this.publishToMowen(newTitle, content, tags, autoPublish, settings, true);
+								new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings, summary) => {
+									await this.publishToMowen(newTitle, content, tags, autoPublish, settings, true, summary);
 								}).open();
 							});
 					});
@@ -255,8 +300,8 @@ export default class MowenPlugin extends Plugin {
 						}
 						const content = markdownView.editor.getValue();
 						const title = file.basename;
-						new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings) => {
-							await this.publishToMowen(newTitle, content, tags, autoPublish, settings, true);
+						new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings, summary) => {
+							await this.publishToMowen(newTitle, content, tags, autoPublish, settings, true, summary);
 						}).open();
 					}
 					return true;
@@ -280,8 +325,8 @@ export default class MowenPlugin extends Plugin {
 						}
 						const content = markdownView.editor.getSelection();
 						const title = file.basename;
-						new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings) => {
-							await this.publishToMowen(newTitle, content, tags, autoPublish, settings, false);
+						new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings, summary) => {
+							await this.publishToMowen(newTitle, content, tags, autoPublish, settings, false, summary);
 						}).open();
 					}
 					return true;
@@ -308,7 +353,7 @@ export default class MowenPlugin extends Plugin {
 	 * @param {string} title - 笔记标题
 	 * @returns {Promise<{ content: any[] }>} NoteAtom 结构
 	 */
-	async markdownToNoteAtom(title: string, markdown: string): Promise<{ content: any[] }> {
+	async markdownToNoteAtom(title: string, markdown: string, summary: string | null = null): Promise<{ content: any[] }> {
 		const lines = markdown.split('\n');
 		const content = [];
 		content.push({
@@ -318,7 +363,17 @@ export default class MowenPlugin extends Plugin {
 			]
 		});
 		// title 后面增加一个空行
-		content.push({ type: 'paragraph' }); // 引用后添加空行
+		content.push({ type: 'paragraph' });
+
+		// 如果有摘要，将其作为引用块添加到标题下方
+		if (summary) {
+			content.push({
+				type: 'quote',
+				content: [{ type: 'text', text: summary }]
+			});
+			content.push({ type: 'paragraph' }); // 摘要后也添加空行
+		}
+
 		let inQuote = false;
 		let quoteBuffer = [];
 		let inFrontmatter = false;
@@ -550,7 +605,7 @@ export default class MowenPlugin extends Plugin {
 		}
 	}
 
-	async publishToMowen(title: string, content: string, tags: string, autoPublish: boolean, settings: any, writeNoteIdToFrontmatter: boolean = true) {
+	async publishToMowen(title: string, content: string, tags: string, autoPublish: boolean, settings: any, writeNoteIdToFrontmatter: boolean = true, summary: string | null = null) {
 		const apiKey = this.settings.apiKey;
 		if (!apiKey) {
 			new Notice('请先在设置中填写 API-KEY');
@@ -561,7 +616,7 @@ export default class MowenPlugin extends Plugin {
 		const noteId = await this.getNoteIdFromFrontmatter(content);
 		settings.tags = tags;
 		// 在这里调用移动后的 markdownToNoteAtom
-		const noteBody = await this.markdownToNoteAtom(title, content);
+		const noteBody = await this.markdownToNoteAtom(title, content, summary);
 
 		const res = await publishNoteToMowen({
 			noteId,
