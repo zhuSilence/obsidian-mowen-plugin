@@ -85,7 +85,7 @@ class MowenPublishModal extends Modal {
 
 		new Setting(contentEl)
 			.setName('标签')
-			.setDesc('可选，逗号分隔，发布到墨问后的笔记标签，会自动增加一个Obsidian标签')
+			.setDesc('可选，英文逗号分隔，发布到墨问后的笔记标签，通过默认标签配置可以进行自定义')
 			.addText((text) => {
 				tagInput = text;
 				text.setValue(this.tags).onChange((value) => {
