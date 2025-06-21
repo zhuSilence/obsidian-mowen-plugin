@@ -48,7 +48,7 @@ export async function publishNoteToMowen(params: PublishNoteParams): Promise<Pub
     //  result.noteId 不等于空时发布成功
     if (response.ok && result.noteId !== "") {
       // 发布成功的情况下，根据 settings 的内容进行笔记的隐私设置
-      // console.log(settings)
+      console.log(settings)
       if (settings.section === 1) {
         // 调用更新 settings path /api/open/api/v1/note/set
         let settingResponse = await fetch(baseUrl + `/note/set`, {

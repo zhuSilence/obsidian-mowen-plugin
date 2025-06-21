@@ -631,7 +631,8 @@ export default class MowenPlugin extends Plugin {
 				privacy: {
 					type: settings.privacy.type,
 					rule: settings.privacy.rule
-				}
+				},
+				section: settings.section
 			},
 			body: noteBody.content // 传递转换后的 NoteAtom 内容
 		});
