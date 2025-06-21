@@ -85,7 +85,7 @@ class MowenPublishModal extends Modal {
 
 		new Setting(contentEl)
 			.setName('标签')
-			.setDesc('可选，逗号分隔，发布到墨问后的笔记标签，会自动增加一个Obsidian标签')
+			.setDesc('可选，英文逗号分隔，发布到墨问后的笔记标签，通过默认标签配置可以进行自定义')
 			.addText((text) => {
 				tagInput = text;
 				text.setValue(this.tags).onChange((value) => {
@@ -375,87 +375,90 @@ export default class MowenPlugin extends Plugin {
 				inQuote = false;
 			}
 
-			// 2. 图片
-			const imgMatch = line.match(/^!\[\[(.+?)\]\]/);
-			if (imgMatch) {
-				const imageName = imgMatch[1]; // 获取到的只是文件名，例如 "file-20250612224955426.png"
-
-				let imageFile: TFile | null = null;
-				let fullImagePath = imageName; // 用于通知和日志，如果找不到完整路径就用文件名
-
-				// 尝试获取当前活动的Markdown文件（即当前正在编辑的笔记）
-				const currentMarkdownFile = this.app.workspace.getActiveFile();
-
-				if (currentMarkdownFile) {
-					// 策略1: 检查图片是否在当前笔记所在的文件夹
-					const currentFolder = currentMarkdownFile.parent?.path;
-					if (currentFolder) {
-						const potentialPath = `${currentFolder}/${imageName}`;
-						const file = this.app.vault.getAbstractFileByPath(potentialPath);
-						if (file instanceof TFile) {
-							imageFile = file;
-							fullImagePath = potentialPath;
-						}
-					}
+			// 2. 图片或内嵌笔记
+			const embedMatch = line.match(/^!\[\[(.+?)\]\]/);
+			const embedMatch2 = line.match(/^\[\[(.+?)\]\]/);
+			if (embedMatch || embedMatch2) {
+				let linkText = ""; // 获取链接文本，如 "My Note" 或 "images/photo.png"
+				if (embedMatch) {
+					linkText = embedMatch[1];
+				} else if (embedMatch2) {
+					linkText = embedMatch2[1];
 				}
 
-				// 策略2: 如果策略1失败，尝试在整个vault中按文件名查找
-				if (!imageFile) {
+				let file: TFile | null = null;
+
+				// 使用 Obsidian API 来解析链接，这是最可靠的方法
+				const currentActiveFile = this.app.workspace.getActiveFile();
+				const sourcePath = currentActiveFile ? currentActiveFile.path : '';
+				if (linkText) {
+					file = this.app.metadataCache.getFirstLinkpathDest(linkText, sourcePath);
+				}
+				
+				// 如果 API 没找到（可能缓存没更新），做一个简单的后备查找
+				if (!file) {
 					const allFiles = this.app.vault.getFiles();
-					for (const file of allFiles) {
-						if (file.name === imageName) {
-							imageFile = file;
-							fullImagePath = file.path;
-							break;
-						}
-					}
+					// 查找 basename (无后缀) 或 name (有后缀)
+					file = allFiles.find(f => f.basename === linkText || f.name === linkText) ?? null;
 				}
 
-				if (imageFile instanceof TFile) { // 确保 imageFile 确实是一个 TFile 实例
-					new Notice(`正在上传图片: ${fullImagePath}`);
-					const mimeType = getMimeType(imageFile.extension);
-					const fileBlob = new Blob([await this.app.vault.readBinary(imageFile)], { type: mimeType });
-					const fileName = imageFile.name; // 确保文件名正确
-					// 将文件扩展转换成对应的整型，1-图片 2-音频 3-PDF
-					const fileType = getFileType(imageFile.extension);
-					const authRes = await getUploadAuthorization(this.settings.apiKey, fileType);
-					if (authRes.success && authRes.data.endpoint) {
-						// 确保 authRes.data 包含 $content-type，因为墨问的策略可能会检查这个表单字段
-						const uploadRes = await deliverFile(authRes.data.endpoint, authRes.data, fileBlob, fileName);
-						// console.log('uploadRes', uploadRes);
-						if (uploadRes.success && uploadRes.data) {
+				if (file instanceof TFile) {
+					const fullPath = file.path;
+					// 判断文件类型
+					if (file.extension.toLowerCase() === 'md') {
+						// 处理内嵌的 Markdown 文件
+						new Notice(`正在处理内嵌笔记: ${fullPath}`);
+						const fileContent = await this.app.vault.read(file);
+						const noteId = await this.getNoteIdFromFrontmatter(fileContent);
+						if (noteId) {
 							content.push({
-								type: 'image',
+								type: 'note',
 								attrs: {
-									// href: uploadRes.data.url,
-									uuid: uploadRes.data.fileId,
-									align: 'center', // 默认居中
-									alt: fileName // 使用文件名作为 alt 文本
+									uuid: noteId
 								}
 							});
-							new Notice(`图片上传成功: ${fileName}`);
+							new Notice(`成功嵌入笔记: ${file.name}`);
 						} else {
-							new Notice(`图片上传失败: ${fileName} - ${uploadRes.message}`);
-							// 上传失败，仍将图片路径作为文本插入
+							new Notice(`内嵌笔记 ${file.name} 未找到 noteId，将作为普通文本插入`);
 							content.push({
 								type: 'paragraph',
-								content: [{ type: 'text', text: `![[${imageName}]]` }]
+								content: [{ type: 'text', text: `[[${linkText}]]` }]
 							});
 						}
 					} else {
-						new Notice(`获取图片上传授权失败: ${authRes.message}`);
-						// 获取授权失败，仍将图片路径作为文本插入
-						content.push({
-							type: 'paragraph',
-							content: [{ type: 'text', text: `![[${imageName}]]` }]
-						});
+						// 处理图片文件（沿用现有逻辑）
+						new Notice(`正在上传图片: ${fullPath}`);
+						const mimeType = getMimeType(file.extension);
+						const fileBlob = new Blob([await this.app.vault.readBinary(file)], { type: mimeType });
+						const fName = file.name;
+						const fileType = getFileType(file.extension);
+						const authRes = await getUploadAuthorization(this.settings.apiKey, fileType);
+						if (authRes.success && authRes.data.endpoint) {
+							const uploadRes = await deliverFile(authRes.data.endpoint, authRes.data, fileBlob, fName);
+							if (uploadRes.success && uploadRes.data) {
+								content.push({
+									type: 'image',
+									attrs: {
+										uuid: uploadRes.data.fileId,
+										align: 'center',
+										alt: fName
+									}
+								});
+								new Notice(`图片上传成功: ${fName}`);
+							} else {
+								new Notice(`图片上传失败: ${fName} - ${uploadRes.message}`);
+								content.push({ type: 'paragraph', content: [{ type: 'text', text: `![[${linkText}]]` }] });
+							}
+						} else {
+							new Notice(`获取图片上传授权失败: ${authRes.message}`);
+							content.push({ type: 'paragraph', content: [{ type: 'text', text: `![[${linkText}]]` }] });
+						}
 					}
 				} else {
-					new Notice(`图片文件未找到或不是文件: ${imageName}. 检查路径: ${fullImagePath}`); // 优化通知
-					// 文件未找到，仍将图片路径作为文本插入
+					new Notice(`文件未找到: ${linkText}`);
 					content.push({
 						type: 'paragraph',
-						content: [{ type: 'text', text: `![[${imageName}]]` }]
+						content: [{ type: 'text', text: `![[${linkText}]]` }]
 					});
 				}
 				continue;
@@ -469,7 +472,7 @@ export default class MowenPlugin extends Plugin {
 					content: [
 						{
 							type: 'text',
-							text: '\n' + headingMatch[2] + '\n',
+							text: headingMatch[2],
 							marks: [{ type: 'bold' }] // 标题默认加粗
 						}
 					]
