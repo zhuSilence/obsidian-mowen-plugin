@@ -676,8 +676,9 @@ export default class MowenPlugin extends Plugin {
 			}
 		}
 
-		// 更新或添加 noteId
-		frontmatterObj.noteId = noteId;
+		// 更新或添加 noteId，使用用户自定义的键名
+		const noteIdKey = this.settings.noteIdKey || 'noteId';
+		frontmatterObj[noteIdKey] = noteId;
 
 		// 更新或添加其他设置
 		if (settings) {
@@ -749,10 +750,43 @@ export default class MowenPlugin extends Plugin {
 	 * @returns {string | null}
 	 */
 	async getNoteIdFromFrontmatter(content: string): Promise<string | null> {
-		// const activeFile = this.app.workspace.getActiveFile();
-		// if (!activeFile) return null;
-		// const fileContent = await this.app.vault.read(activeFile);
-		const match = content.match(/noteId:\s*(\S+)/);
-		return match ? match[1] : null;
+		const customKey = this.settings.noteIdKey || 'noteId';
+		const defaultKey = 'noteId';
+
+		// 检查的键名数组，自定义键名优先。使用 Set 确保在两者相同时不重复。
+		const keysToCheck = [...new Set([customKey, defaultKey])];
+
+		const frontmatterMatch = content.match(/(^---[\s\S]*?---)/);
+
+		if (frontmatterMatch) {
+			const yamlContent = frontmatterMatch[1].replace(/^---\n|\n---$/g, '');
+			try {
+				const frontmatterObj: any = yaml.load(yamlContent);
+				if (frontmatterObj && typeof frontmatterObj === 'object') {
+					for (const key of keysToCheck) {
+						if (frontmatterObj[key]) {
+							return frontmatterObj[key];
+						}
+					}
+				}
+			} catch (e) {
+				console.error('解析 frontmatter 失败，回退到正则匹配:', e);
+				// 如果YAML解析失败，在YAML块内尝试用简单的正则作为后备
+				for (const key of keysToCheck) {
+					const regex = new RegExp(`^${key}:\\s*(\\S+)`, 'm');
+					const match = yamlContent.match(regex);
+					if (match) return match[1];
+				}
+			}
+		}
+		
+		// 如果没有 frontmatter 或解析失败，最后尝试一次全局正则匹配
+		for (const key of keysToCheck) {
+			const regex = new RegExp(`${key}:\\s*(\\S+)`);
+			const match = content.match(regex);
+			if (match) return match[1];
+		}
+
+		return null;
 	}
 }

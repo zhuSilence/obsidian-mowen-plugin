@@ -14,6 +14,7 @@ export interface MowenPluginSettings {
   apiKey: string;
   autoPublish: boolean;
   defaultTag: string;
+  noteIdKey: string; // frontmatter 中存储 noteId 的键名
   llmSettings: LLMSettings; // 添加 LLM 设置
 }
 
@@ -21,6 +22,7 @@ export const DEFAULT_SETTINGS: MowenPluginSettings = {
   apiKey: "",
   autoPublish: true,
   defaultTag: "Obsidian",
+  noteIdKey: 'noteId', // 默认为 'noteId'
   llmSettings: {
     provider: 'deepseek',
     apiKey: '',
@@ -53,6 +55,17 @@ export class MowenSettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.apiKey)
         .onChange(async (value) => {
           this.plugin.settings.apiKey = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('笔记ID键名')
+      .setDesc('用于在frontmatter中存储墨问笔记ID的键名，以避免与其他插件冲突，不建议频繁修改，建议保持不变。')
+      .addText(text => text
+        .setPlaceholder('例如: mowenId')
+        .setValue(this.plugin.settings.noteIdKey)
+        .onChange(async (value) => {
+          this.plugin.settings.noteIdKey = value.trim();
           await this.plugin.saveSettings();
         }));
 
