@@ -15,6 +15,8 @@ export interface MowenPluginSettings {
   autoPublish: boolean;
   defaultTag: string;
   noteIdKey: string; // frontmatter 中存储 noteId 的键名
+  titleKey: string; // frontmatter 中存储标题的键名
+  enableLegacyNoteIdFallback: boolean; // 是否在找不到自定义key时，回退查找'noteId'
   llmSettings: LLMSettings; // 添加 LLM 设置
 }
 
@@ -23,6 +25,8 @@ export const DEFAULT_SETTINGS: MowenPluginSettings = {
   autoPublish: true,
   defaultTag: "Obsidian",
   noteIdKey: 'noteId', // 默认为 'noteId'
+  titleKey: '', // 默认不使用自定义标题
+  enableLegacyNoteIdFallback: true, // 默认开启兼容模式
   llmSettings: {
     provider: 'deepseek',
     apiKey: '',
@@ -66,6 +70,27 @@ export class MowenSettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.noteIdKey)
         .onChange(async (value) => {
           this.plugin.settings.noteIdKey = value.trim();
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('标题属性键')
+      .setDesc('可选。如果配置此项，将从frontmatter中读取该键名对应的值作为笔记标题。')
+      .addText(text => text
+        .setPlaceholder('例如: mowenTitle')
+        .setValue(this.plugin.settings.titleKey)
+        .onChange(async (value) => {
+          this.plugin.settings.titleKey = value.trim();
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('兼容旧版笔记ID')
+      .setDesc("开启后，当找不到自定义的笔记ID键时，会自动尝试查找默认的 'noteId' 键。如果其他插件占用了 'noteId' 导致冲突，请关闭此选项。")
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.enableLegacyNoteIdFallback)
+        .onChange(async (value) => {
+          this.plugin.settings.enableLegacyNoteIdFallback = value;
           await this.plugin.saveSettings();
         }));
 

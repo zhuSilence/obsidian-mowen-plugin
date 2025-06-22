@@ -131,7 +131,7 @@ class MowenPublishModal extends Modal {
 							console.error(error);
 							this.renderSettings(); // 即使失败也重绘，恢复按钮
 						}
-					});
+				});
 			});
 
 		new Setting(contentEl)
@@ -275,7 +275,7 @@ export default class MowenPlugin extends Plugin {
 							.setIcon('upload') // 你可以选择合适的图标
 							.onClick(async () => {
 								const content = await this.app.vault.read(file);
-								const title = file.basename;
+								const title = await this.getTitleFromFile(file);
 								new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings, summary) => {
 									await this.publishToMowen(newTitle, content, tags, autoPublish, settings, true, summary);
 								}).open();
@@ -299,10 +299,11 @@ export default class MowenPlugin extends Plugin {
 							return;
 						}
 						const content = markdownView.editor.getValue();
-						const title = file.basename;
-						new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings, summary) => {
-							await this.publishToMowen(newTitle, content, tags, autoPublish, settings, true, summary);
-						}).open();
+						this.getTitleFromFile(file).then(title => {
+							new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings, summary) => {
+								await this.publishToMowen(newTitle, content, tags, autoPublish, settings, true, summary);
+							}).open();
+						});
 					}
 					return true;
 				}
@@ -324,10 +325,11 @@ export default class MowenPlugin extends Plugin {
 							return;
 						}
 						const content = markdownView.editor.getSelection();
-						const title = file.basename;
-						new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings, summary) => {
-							await this.publishToMowen(newTitle, content, tags, autoPublish, settings, false, summary);
-						}).open();
+						this.getTitleFromFile(file).then(title => {
+							new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings, summary) => {
+								await this.publishToMowen(newTitle, content, tags, autoPublish, settings, false, summary);
+							}).open();
+						});
 					}
 					return true;
 				}
@@ -449,7 +451,7 @@ export default class MowenPlugin extends Plugin {
 				if (linkText) {
 					file = this.app.metadataCache.getFirstLinkpathDest(linkText, sourcePath);
 				}
-				
+
 				// 如果 API 没找到（可能缓存没更新），做一个简单的后备查找
 				if (!file) {
 					const allFiles = this.app.vault.getFiles();
@@ -491,7 +493,7 @@ export default class MowenPlugin extends Plugin {
 						if (authRes.success && authRes.data.endpoint) {
 							const uploadRes = await deliverFile(authRes.data.endpoint, authRes.data, fileBlob, fName);
 							if (uploadRes.success && uploadRes.data) {
-								content.push({
+						content.push({
 									type: 'image',
 									attrs: {
 										uuid: uploadRes.data.fileId,
@@ -613,7 +615,9 @@ export default class MowenPlugin extends Plugin {
 		}
 		const tagArr = tags.split(',').map(t => t.trim()).filter(Boolean);
 		new Notice('正在发布到墨问...');
+		
 		const noteId = await this.getNoteIdFromFrontmatter(content);
+
 		settings.tags = tags;
 		// 在这里调用移动后的 markdownToNoteAtom
 		const noteBody = await this.markdownToNoteAtom(title, content, summary);
@@ -753,8 +757,11 @@ export default class MowenPlugin extends Plugin {
 		const customKey = this.settings.noteIdKey || 'noteId';
 		const defaultKey = 'noteId';
 
-		// 检查的键名数组，自定义键名优先。使用 Set 确保在两者相同时不重复。
-		const keysToCheck = [...new Set([customKey, defaultKey])];
+		// 根据设置，决定要检查哪些key
+		const keysToCheck: string[] = [customKey];
+		if (this.settings.enableLegacyNoteIdFallback && customKey !== defaultKey) {
+			keysToCheck.push(defaultKey);
+		}
 
 		const frontmatterMatch = content.match(/(^---[\s\S]*?---)/);
 
@@ -788,5 +795,30 @@ export default class MowenPlugin extends Plugin {
 		}
 
 		return null;
+	}
+
+	async getTitleFromFile(file: TFile): Promise<string> {
+		const titleKey = this.settings.titleKey;
+		if (!titleKey) {
+			return file.basename;
+		}
+
+		const fileContent = await this.app.vault.read(file);
+		const frontmatterMatch = fileContent.match(/(^---[\s\S]*?---)/);
+
+		if (frontmatterMatch) {
+			const yamlContent = frontmatterMatch[1].replace(/^---\n|\n---$/g, '');
+			try {
+				const frontmatterObj: any = yaml.load(yamlContent);
+				if (frontmatterObj && typeof frontmatterObj === 'object' && frontmatterObj[titleKey]) {
+					return frontmatterObj[titleKey];
+				}
+			} catch (e) {
+				console.error(`解析 frontmatter 失败 (${file.path}):`, e);
+			}
+		}
+
+		// 如果没有找到key或者解析失败，回退到文件名
+		return file.basename;
 	}
 }
