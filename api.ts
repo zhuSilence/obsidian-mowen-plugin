@@ -58,7 +58,7 @@ export async function publishNoteToMowen(params: PublishNoteParams): Promise<Pub
             "Authorization": `Bearer ${apiKey}`,
           },
           body: JSON.stringify({
-            "noteId": noteId,
+            "noteId": result.noteId,
             "section": settings.section,
             "settings": {
               "privacy": settings.privacy

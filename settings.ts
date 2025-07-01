@@ -10,6 +10,18 @@ export interface LLMSettings {
   tagsCount: number; // AI生成标签的数量
 }
 
+export interface GlobalPublishConfig {
+  autoPublish: boolean; // 是否自动发布
+  tags: string; // 全局标签，英文逗号分隔
+  privacy: {
+    type: 'public' | 'private' | 'rule'; // 隐私类型
+    rule?: {
+      noShare: boolean; // 是否禁止分享
+      expireAt: number; // 公开截止时间（秒时间戳，0为永久）
+    };
+  };
+}
+
 export interface MowenPluginSettings {
   apiKey: string;
   autoPublish: boolean;
@@ -17,7 +29,9 @@ export interface MowenPluginSettings {
   noteIdKey: string; // frontmatter 中存储 noteId 的键名
   titleKey: string; // frontmatter 中存储标题的键名
   enableLegacyNoteIdFallback: boolean; // 是否在找不到自定义key时，回退查找'noteId'
-  llmSettings: LLMSettings; // 添加 LLM 设置
+  llmSettings: LLMSettings; // AI 相关设置
+  globalPublishEnabled: boolean; // 全局发布配置开关
+  globalPublishConfig: GlobalPublishConfig; // 全局发布配置
 }
 
 export const DEFAULT_SETTINGS: MowenPluginSettings = {
@@ -33,6 +47,18 @@ export const DEFAULT_SETTINGS: MowenPluginSettings = {
     model: 'deepseek-chat', // DeepSeek 默认模型
     generateSummary: false, // 默认不生成摘要
     tagsCount: 3 // 默认生成3个标签
+  },
+  globalPublishEnabled: false,
+  globalPublishConfig: {
+    autoPublish: true,
+    tags: '',
+    privacy: {
+      type: 'public',
+      rule: {
+        noShare: false,
+        expireAt: 0
+      }
+    }
   },
 };
 
@@ -113,6 +139,102 @@ export class MowenSettingTab extends PluginSettingTab {
           this.plugin.settings.autoPublish = value;
           await this.plugin.saveSettings();
         }));
+
+    // 全局发布配置
+    containerEl.createEl('h2', { text: '全局发布配置' });
+
+    new Setting(containerEl)
+      .setName('启用全局发布配置')
+      .setDesc('开启后，发布笔记时将直接采用下方配置，无需每次弹窗设置')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.globalPublishEnabled)
+        .onChange(async (value) => {
+          this.plugin.settings.globalPublishEnabled = value;
+          await this.plugin.saveSettings();
+          this.display(); // 切换时刷新UI
+        }));
+
+    if (this.plugin.settings.globalPublishEnabled) {
+      // 自动发布
+      new Setting(containerEl)
+        .setName('自动发布')
+        .setDesc('发布后是否立即公开，无需审核')
+        .addToggle(toggle => toggle
+          .setValue(this.plugin.settings.globalPublishConfig.autoPublish)
+          .onChange(async (value) => {
+            this.plugin.settings.globalPublishConfig.autoPublish = value;
+            await this.plugin.saveSettings();
+          }));
+
+      // 全局标签
+      new Setting(containerEl)
+        .setName('标签')
+        .setDesc('全局标签，多个标签用英文逗号分隔')
+        .addText(text => text
+          .setValue(this.plugin.settings.globalPublishConfig.tags)
+          .onChange(async (value) => {
+            this.plugin.settings.globalPublishConfig.tags = value;
+            await this.plugin.saveSettings();
+          }));
+
+      // 隐私类型
+      new Setting(containerEl)
+        .setName('隐私类型')
+        .setDesc('选择发布笔记的隐私类型')
+        .addDropdown(drop => {
+          drop.addOption('public', '公开');
+          drop.addOption('private', '私有');
+          drop.addOption('rule', '规则');
+          drop.setValue(this.plugin.settings.globalPublishConfig.privacy.type);
+          drop.onChange(async (value) => {
+            this.plugin.settings.globalPublishConfig.privacy.type = value as 'public' | 'private' | 'rule';
+            await this.plugin.saveSettings();
+            this.display(); // 切换时刷新UI
+          });
+        });
+
+      // 规则设置（仅当类型为 rule 时显示）
+      if (this.plugin.settings.globalPublishConfig.privacy.type === 'rule') {
+        new Setting(containerEl)
+          .setName('禁止分享')
+          .setDesc('开启后，禁止他人分享/转发该笔记')
+          .addToggle(toggle => toggle
+            .setValue(this.plugin.settings.globalPublishConfig.privacy.rule?.noShare ?? false)
+            .onChange(async (value) => {
+              if (!this.plugin.settings.globalPublishConfig.privacy.rule) {
+                this.plugin.settings.globalPublishConfig.privacy.rule = { noShare: value, expireAt: 0 };
+              } else {
+                this.plugin.settings.globalPublishConfig.privacy.rule.noShare = value;
+              }
+              await this.plugin.saveSettings();
+            }));
+
+        new Setting(containerEl)
+          .setName('公开截止时间')
+          .setDesc('到期后自动变为私有，留空为永久公开')
+          .addText(text => {
+            let defaultValue = '';
+            const expireAt = this.plugin.settings.globalPublishConfig.privacy.rule?.expireAt ?? 0;
+            if (expireAt) {
+              const date = new Date(expireAt * 1000);
+              defaultValue = date.toISOString().slice(0, 16);
+            }
+            text.inputEl.type = 'datetime-local';
+            text.setValue(defaultValue);
+            text.onChange(async (value) => {
+              if (!this.plugin.settings.globalPublishConfig.privacy.rule) {
+                this.plugin.settings.globalPublishConfig.privacy.rule = { noShare: false, expireAt: 0 };
+              }
+              if (value) {
+                this.plugin.settings.globalPublishConfig.privacy.rule.expireAt = Math.floor(new Date(value).getTime() / 1000);
+              } else {
+                this.plugin.settings.globalPublishConfig.privacy.rule.expireAt = 0;
+              }
+              await this.plugin.saveSettings();
+            });
+          });
+      }
+    }
 
     // AI 功能设置
     containerEl.createEl('h2', { text: 'AI 功能设置' });

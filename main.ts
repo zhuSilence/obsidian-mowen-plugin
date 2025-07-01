@@ -255,10 +255,33 @@ export default class MowenPlugin extends Plugin {
 						item
 							.setTitle('Publish Selected Text to Mowen')
 							.setIcon('upload')
-							.onClick(() => {
-								new MowenPublishModal(this.app, selectedText, '', this, async (title, tags, autoPublish, settings, summary) => {
-									await this.publishToMowen(title, selectedText, tags, autoPublish, settings, false, summary);
-								}).open();
+							.onClick(async () => {
+								if (this.settings.globalPublishEnabled) {
+									// 合并全局标签和默认标签，去重
+									const globalTags = this.settings.globalPublishConfig.tags ? this.settings.globalPublishConfig.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
+									const defaultTags = this.settings.defaultTag ? this.settings.defaultTag.split(',').map(t => t.trim()).filter(Boolean) : [];
+									const tagsArr = Array.from(new Set([...defaultTags, ...globalTags]));
+									const tags = tagsArr.join(',');
+									const autoPublish = this.settings.globalPublishConfig.autoPublish;
+									const privacy = this.settings.globalPublishConfig.privacy;
+									const section = 1;
+									await this.publishToMowen(
+										'',
+										selectedText,
+										tags,
+										autoPublish,
+										{
+											section,
+											privacy
+										},
+										false,
+										null
+									);
+								} else {
+									new MowenPublishModal(this.app, selectedText, '', this, async (title, tags, autoPublish, settings, summary) => {
+										await this.publishToMowen(title, selectedText, tags, autoPublish, settings, false, summary);
+									}).open();
+								}
 							});
 					});
 				}
@@ -272,13 +295,36 @@ export default class MowenPlugin extends Plugin {
 					menu.addItem((item) => {
 						item
 							.setTitle('Publish to Mowen')
-							.setIcon('upload') // 你可以选择合适的图标
+							.setIcon('upload')
 							.onClick(async () => {
 								const content = await this.app.vault.read(file);
 								const title = await this.getTitleFromFile(file);
-								new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings, summary) => {
-									await this.publishToMowen(newTitle, content, tags, autoPublish, settings, true, summary);
-								}).open();
+								if (this.settings.globalPublishEnabled) {
+									// 合并全局标签和默认标签，去重
+									const globalTags = this.settings.globalPublishConfig.tags ? this.settings.globalPublishConfig.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
+									const defaultTags = this.settings.defaultTag ? this.settings.defaultTag.split(',').map(t => t.trim()).filter(Boolean) : [];
+									const tagsArr = Array.from(new Set([...defaultTags, ...globalTags]));
+									const tags = tagsArr.join(',');
+									const autoPublish = this.settings.globalPublishConfig.autoPublish;
+									const privacy = this.settings.globalPublishConfig.privacy;
+									const section = 1;
+									await this.publishToMowen(
+										title,
+										content,
+										tags,
+										autoPublish,
+										{
+											section,
+											privacy
+										},
+										true,
+										null
+									);
+								} else {
+									new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings, summary) => {
+										await this.publishToMowen(newTitle, content, tags, autoPublish, settings, true, summary);
+									}).open();
+								}
 							});
 					});
 				}
@@ -300,9 +346,32 @@ export default class MowenPlugin extends Plugin {
 						}
 						const content = markdownView.editor.getValue();
 						this.getTitleFromFile(file).then(title => {
-							new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings, summary) => {
-								await this.publishToMowen(newTitle, content, tags, autoPublish, settings, true, summary);
-							}).open();
+							if (this.settings.globalPublishEnabled) {
+								// 合并全局标签和默认标签，去重
+								const globalTags = this.settings.globalPublishConfig.tags ? this.settings.globalPublishConfig.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
+								const defaultTags = this.settings.defaultTag ? this.settings.defaultTag.split(',').map(t => t.trim()).filter(Boolean) : [];
+								const tagsArr = Array.from(new Set([...defaultTags, ...globalTags]));
+								const tags = tagsArr.join(',');
+								const autoPublish = this.settings.globalPublishConfig.autoPublish;
+								const privacy = this.settings.globalPublishConfig.privacy;
+								const section = 1;
+								this.publishToMowen(
+									title,
+									content,
+									tags,
+									autoPublish,
+									{
+										section,
+										privacy
+									},
+									true,
+									null
+								);
+							} else {
+								new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings, summary) => {
+									await this.publishToMowen(newTitle, content, tags, autoPublish, settings, true, summary);
+								}).open();
+							}
 						});
 					}
 					return true;
@@ -326,9 +395,32 @@ export default class MowenPlugin extends Plugin {
 						}
 						const content = markdownView.editor.getSelection();
 						this.getTitleFromFile(file).then(title => {
-							new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings, summary) => {
-								await this.publishToMowen(newTitle, content, tags, autoPublish, settings, false, summary);
-							}).open();
+							if (this.settings.globalPublishEnabled) {
+								// 合并全局标签和默认标签，去重
+								const globalTags = this.settings.globalPublishConfig.tags ? this.settings.globalPublishConfig.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
+								const defaultTags = this.settings.defaultTag ? this.settings.defaultTag.split(',').map(t => t.trim()).filter(Boolean) : [];
+								const tagsArr = Array.from(new Set([...defaultTags, ...globalTags]));
+								const tags = tagsArr.join(',');
+								const autoPublish = this.settings.globalPublishConfig.autoPublish;
+								const privacy = this.settings.globalPublishConfig.privacy;
+								const section = 1;
+								this.publishToMowen(
+									title,
+									content,
+									tags,
+									autoPublish,
+									{
+										section,
+										privacy
+									},
+									false,
+									null
+								);
+							} else {
+								new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings, summary) => {
+									await this.publishToMowen(newTitle, content, tags, autoPublish, settings, false, summary);
+								}).open();
+							}
 						});
 					}
 					return true;
