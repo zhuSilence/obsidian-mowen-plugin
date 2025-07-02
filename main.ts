@@ -257,10 +257,11 @@ export default class MowenPlugin extends Plugin {
 							.setIcon('upload')
 							.onClick(async () => {
 								if (this.settings.globalPublishEnabled) {
-									// 合并全局标签和默认标签，去重
+									// 合并全局标签、默认标签和笔记自身标签
 									const globalTags = this.settings.globalPublishConfig.tags ? this.settings.globalPublishConfig.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
 									const defaultTags = this.settings.defaultTag ? this.settings.defaultTag.split(',').map(t => t.trim()).filter(Boolean) : [];
-									const tagsArr = Array.from(new Set([...defaultTags, ...globalTags]));
+									const noteTags = markdownTagsToNoteAtomTags(selectedText, this.settings.defaultTag).tags || [];
+									const tagsArr = Array.from(new Set([...defaultTags, ...globalTags, ...noteTags]));
 									const tags = tagsArr.join(',');
 									const autoPublish = this.settings.globalPublishConfig.autoPublish;
 									const privacy = this.settings.globalPublishConfig.privacy;
@@ -300,10 +301,11 @@ export default class MowenPlugin extends Plugin {
 								const content = await this.app.vault.read(file);
 								const title = await this.getTitleFromFile(file);
 								if (this.settings.globalPublishEnabled) {
-									// 合并全局标签和默认标签，去重
+									// 合并全局标签、默认标签和笔记自身标签
 									const globalTags = this.settings.globalPublishConfig.tags ? this.settings.globalPublishConfig.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
 									const defaultTags = this.settings.defaultTag ? this.settings.defaultTag.split(',').map(t => t.trim()).filter(Boolean) : [];
-									const tagsArr = Array.from(new Set([...defaultTags, ...globalTags]));
+									const noteTags = markdownTagsToNoteAtomTags(content, this.settings.defaultTag).tags || [];
+									const tagsArr = Array.from(new Set([...defaultTags, ...globalTags, ...noteTags]));
 									const tags = tagsArr.join(',');
 									const autoPublish = this.settings.globalPublishConfig.autoPublish;
 									const privacy = this.settings.globalPublishConfig.privacy;
@@ -347,10 +349,11 @@ export default class MowenPlugin extends Plugin {
 						const content = markdownView.editor.getValue();
 						this.getTitleFromFile(file).then(title => {
 							if (this.settings.globalPublishEnabled) {
-								// 合并全局标签和默认标签，去重
+								// 合并全局标签、默认标签和笔记自身标签
 								const globalTags = this.settings.globalPublishConfig.tags ? this.settings.globalPublishConfig.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
 								const defaultTags = this.settings.defaultTag ? this.settings.defaultTag.split(',').map(t => t.trim()).filter(Boolean) : [];
-								const tagsArr = Array.from(new Set([...defaultTags, ...globalTags]));
+								const noteTags = markdownTagsToNoteAtomTags(content, this.settings.defaultTag).tags || [];
+								const tagsArr = Array.from(new Set([...defaultTags, ...globalTags, ...noteTags]));
 								const tags = tagsArr.join(',');
 								const autoPublish = this.settings.globalPublishConfig.autoPublish;
 								const privacy = this.settings.globalPublishConfig.privacy;
@@ -396,10 +399,11 @@ export default class MowenPlugin extends Plugin {
 						const content = markdownView.editor.getSelection();
 						this.getTitleFromFile(file).then(title => {
 							if (this.settings.globalPublishEnabled) {
-								// 合并全局标签和默认标签，去重
+								// 合并全局标签、默认标签和笔记自身标签
 								const globalTags = this.settings.globalPublishConfig.tags ? this.settings.globalPublishConfig.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
 								const defaultTags = this.settings.defaultTag ? this.settings.defaultTag.split(',').map(t => t.trim()).filter(Boolean) : [];
-								const tagsArr = Array.from(new Set([...defaultTags, ...globalTags]));
+								const noteTags = markdownTagsToNoteAtomTags(content, this.settings.defaultTag).tags || [];
+								const tagsArr = Array.from(new Set([...defaultTags, ...globalTags, ...noteTags]));
 								const tags = tagsArr.join(',');
 								const autoPublish = this.settings.globalPublishConfig.autoPublish;
 								const privacy = this.settings.globalPublishConfig.privacy;
