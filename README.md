@@ -27,7 +27,7 @@
 ### 1. 安装插件
 在 release 页面中下载插件，并安装到 Obsidian 中。
 
-找到本地 Obsidian 笔记文件夹位置，在.obsidian/plugin 文件夹下创建一个名称为 obsidian-mowen-plugin 的文件夹，下载最新发布的 main.js,style.css,manifest.json 三个文件，放到刚刚创建的 obsidian-mowen-plugin 文件夹中。
+找到本地 Obsidian 笔记文件夹位置，在.obsidian/plugins 文件夹下创建一个名称为 obsidian-mowen-plugin 的文件夹，下载最新发布的 main.js,style.css,manifest.json 三个文件，放到刚刚创建的 obsidian-mowen-plugin 文件夹中。
 ![](1.png)
 ![](2.png)
 

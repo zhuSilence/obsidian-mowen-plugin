@@ -332,13 +332,9 @@ export default class MowenPlugin extends Plugin {
 			name: 'Publish to Mowen',
 			checkCallback: (checking: boolean) => {
 				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
+				if (markdownView && markdownView.file) {
 					if (!checking) {
 						const file = markdownView.file;
-						if (!file) {
-							new Notice('未找到当前笔记文件');
-							return;
-						}
 						const content = markdownView.editor.getValue();
 						this.getTitleFromFile(file).then(title => {
 							if (this.settings.globalPublishEnabled) {
@@ -381,16 +377,12 @@ export default class MowenPlugin extends Plugin {
 		this.addCommand({
 			id: 'publish-current-selected-text-to-mowen',
 			name: 'Publish selected text to Mowen',
-			checkCallback: (checking: boolean) => {
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
+			editorCheckCallback: (checking: boolean, editor: Editor, view: MarkdownView) => {
+				const selection = editor.getSelection();
+				if (view.file && selection && selection.trim().length > 0) {
 					if (!checking) {
-						const file = markdownView.file;
-						if (!file) {
-							new Notice('未找到当前笔记文件');
-							return;
-						}
-						const content = markdownView.editor.getSelection();
+						const file = view.file;
+						const content = selection;
 						this.getTitleFromFile(file).then(title => {
 							if (this.settings.globalPublishEnabled) {
 								// 合并全局标签、默认标签和笔记自身标签
@@ -447,7 +439,15 @@ export default class MowenPlugin extends Plugin {
 	 * @returns {Promise<{ content: any[] }>} NoteAtom 结构
 	 */
 	async markdownToNoteAtom(title: string, markdown: string, summary: string | null = null): Promise<{ content: any[] }> {
-		const lines = markdown.split('\n');
+		// Skip frontmatter using Obsidian's getFrontMatterInfo
+		let contentToProcess = markdown;
+		const frontMatterInfo = getFrontMatterInfo(markdown);
+		if (frontMatterInfo.exists) {
+			// Remove frontmatter from content to process
+			contentToProcess = markdown.slice(frontMatterInfo.contentStart);
+		}
+
+		const lines = contentToProcess.split('\n');
 		const content = [];
 		content.push({
 			type: 'paragraph',
@@ -469,21 +469,11 @@ export default class MowenPlugin extends Plugin {
 
 		let inQuote = false;
 		let quoteBuffer = [];
-		let inFrontmatter = false;
 		let inCode = false;
 
 		for (let i = 0; i < lines.length; i++) {
 			let line = lines[i].trim();
-
-			// 处理 frontmatter
-			if (line === '---') {
-				inFrontmatter = !inFrontmatter;
-				continue;
-			}
-			if (inFrontmatter) {
-				continue;
-			}
-			if (line === '```') {
+			if (line.startsWith('```')) {
 				inCode = !inCode;
 				continue; // 跳过代码块的三个反引号行
 			}
@@ -699,10 +689,10 @@ export default class MowenPlugin extends Plugin {
 		const tagArr = tags.split(',').map(t => t.trim()).filter(Boolean);
 		new Notice('正在发布到墨问...');
 		
-		// 对于选中文本发布，使用 MetadataCache 获取 noteId
+		// 对于选中文本发布，不传递 noteId，因为这是新笔记
 		let noteId: string | null;
 		if (isSelection) {
-			noteId = this.getNoteIdFromCache();
+			noteId = null;
 		} else {
 			noteId = await this.getNoteIdFromFrontmatter(content);
 		}
