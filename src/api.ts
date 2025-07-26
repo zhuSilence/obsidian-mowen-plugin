@@ -1,3 +1,5 @@
+import { getFrontMatterInfo, parseYaml } from 'obsidian';
+
 export interface PublishNoteParams {
   noteId?: string | null;
   apiKey: string;
@@ -359,47 +361,30 @@ export function markdownToNoteAtom(title: string, markdown: string): { content: 
  * @returns {string[]}
  */
 export function markdownTagsToNoteAtomTags(markdown: string, defaultTag: string = 'Obsidian'): { tags: string[] } {
-  const lines = markdown.split('\n');
-  let inYaml = false;
-  let yamlLines = [];
   let tags: string[] = [];
 
-  for (let i = 0; i < lines.length; i++) {
-    let line = lines[i].trim();
+  // 使用 Obsidian 的 getFrontMatterInfo 获取 frontmatter 信息
+  const frontMatterInfo = getFrontMatterInfo(markdown);
 
-    // 1. YAML头部
-    if (line === '---') {
-      inYaml = !inYaml;
-      continue;
-    }
-    if (inYaml) {
-      yamlLines.push(line);
-      continue;
-    }
-  }
-  // 处理 YAML
-  if (yamlLines.length > 0) {
-    for (let idx = 0; idx < yamlLines.length; idx++) {
-      const yamlLine = yamlLines[idx];
-      if (yamlLine.startsWith('tags:')) {
-        // tags 多行合并
-        let tagLine = yamlLine.replace('tags:', '').trim();
-        if (tagLine === '') {
-          let j = idx + 1;
-          let tagArr = [];
-          while (j < yamlLines.length && yamlLines[j].startsWith('-')) {
-            tagArr.push(yamlLines[j].replace('-', '').trim());
-            j++;
-          }
-          tags = tagArr;
-        } else {
-          // 单行 tags: tag1, tag2
-          tags = tagLine.split(',').map(t => t.trim()).filter(Boolean);
+  if (frontMatterInfo.exists) {
+    try {
+      // 使用 parseYaml 解析 frontmatter
+      const frontmatterObj = parseYaml(frontMatterInfo.frontmatter);
+      
+      if (frontmatterObj && typeof frontmatterObj === 'object' && frontmatterObj.tags) {
+        if (Array.isArray(frontmatterObj.tags)) {
+          // 数组形式的标签
+          tags = frontmatterObj.tags.map((tag: any) => String(tag).trim()).filter(Boolean);
+        } else if (typeof frontmatterObj.tags === 'string') {
+          // 字符串形式的标签，用逗号分隔
+          tags = frontmatterObj.tags.split(',').map((t: string) => t.trim()).filter(Boolean);
         }
-        // 不再将 tags 作为 paragraph 插入 content
       }
+    } catch (e) {
+      console.error('解析 frontmatter 中的标签失败:', e);
     }
   }
+
   // 在 tags 中添加 defaultTag
   tags.push(defaultTag);
   return {

@@ -1,8 +1,7 @@
-import { App, Editor, MarkdownView, Notice, Plugin, PluginSettingTab, Setting, Menu, TextComponent, Modal, TFile } from 'obsidian';
+import { App, Editor, MarkdownView, Notice, Plugin, Setting, Menu, TextComponent, Modal, TFile, getFrontMatterInfo, parseYaml, stringifyYaml } from 'obsidian';
 import { MowenSettingTab, DEFAULT_SETTINGS, MowenPluginSettings } from "./settings";
 import { publishNoteToMowen, markdownTagsToNoteAtomTags, getUploadAuthorization, deliverFile, getFileType, getMimeType } from "./api";
 import { generateNoteMetadata } from "./ai"; // 导入AI生成函数
-import * as yaml from 'js-yaml';
 
 // 发布弹窗 Modal
 class MowenPublishModal extends Modal {
@@ -13,7 +12,7 @@ class MowenPublishModal extends Modal {
 	plugin: MowenPlugin; // 添加插件实例
 	initialLoadDone: boolean = false; // 添加标志，控制是否已经初始化
 	section: number = 0;
-	privacy: 'public' | 'private' | 'rule' = 'public';
+	privacy: string = 'private';
 	noShare: boolean = false;
 	expireAt: number = 0;
 	summary: string | null = null; // 用于存储AI生成的摘要
@@ -72,14 +71,10 @@ class MowenPublishModal extends Modal {
 		contentEl.empty();
 		contentEl.createEl('h2', { text: '发布到墨问' });
 
-		let titleInput: TextComponent;
-		let tagInput: TextComponent;
-
 		new Setting(contentEl)
 			.setName('标题')
 			.setDesc('发布到墨问后的笔记标题，会自动加粗')
 			.addText((text) => {
-				titleInput = text;
 				text.setValue(this.title).onChange((value) => {
 					this.title = value;
 				});
@@ -89,7 +84,6 @@ class MowenPublishModal extends Modal {
 			.setName('标签')
 			.setDesc('可选，英文逗号分隔，发布到墨问后的笔记标签，通过默认标签配置可以进行自定义')
 			.addText((text) => {
-				tagInput = text;
 				text.setValue(this.tags).onChange((value) => {
 					this.tags = value;
 				});
@@ -170,12 +164,12 @@ class MowenPublishModal extends Modal {
 				.setName('隐私类型')
 				.setDesc('设置笔记的隐私类型')
 				.addDropdown(drop => {
-					drop.addOption('public', '公开');
 					drop.addOption('private', '私有');
+					drop.addOption('public', '公开');
 					drop.addOption('rule', '规则');					
-					drop.setValue(this.privacy);
+					drop.setValue('private');
 					drop.onChange(value => {
-						this.privacy = value as 'public' | 'private' | 'rule';
+						this.privacy = value;
 						this.renderSettings(); // 只重新渲染设置部分
 					});
 				});
@@ -248,12 +242,12 @@ export default class MowenPlugin extends Plugin {
 
 		// 右键菜单：选中文本发布到墨问
 		this.registerEvent(
-			this.app.workspace.on('editor-menu', (menu: Menu, editor: Editor, view: MarkdownView) => {
+			this.app.workspace.on('editor-menu', (menu: Menu, editor: Editor, _view: MarkdownView) => {
 				const selectedText = editor.getSelection();
 				if (selectedText && selectedText.length > 0) {
 					menu.addItem((item) => {
 						item
-							.setTitle('Publish Selected Text to Mowen')
+							.setTitle('Publish selected text to Mowen')
 							.setIcon('upload')
 							.onClick(async () => {
 								if (this.settings.globalPublishEnabled) {
@@ -276,11 +270,12 @@ export default class MowenPlugin extends Plugin {
 											privacy
 										},
 										false,
-										null
+										null,
+										true
 									);
 								} else {
 									new MowenPublishModal(this.app, selectedText, '', this, async (title, tags, autoPublish, settings, summary) => {
-										await this.publishToMowen(title, selectedText, tags, autoPublish, settings, false, summary);
+										await this.publishToMowen(title, selectedText, tags, autoPublish, settings, false, summary, true);
 									}).open();
 								}
 							});
@@ -320,11 +315,12 @@ export default class MowenPlugin extends Plugin {
 											privacy
 										},
 										true,
-										null
+										null,
+										false
 									);
 								} else {
 									new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings, summary) => {
-										await this.publishToMowen(newTitle, content, tags, autoPublish, settings, true, summary);
+										await this.publishToMowen(newTitle, content, tags, autoPublish, settings, true, summary, false);
 									}).open();
 								}
 							});
@@ -368,11 +364,12 @@ export default class MowenPlugin extends Plugin {
 										privacy
 									},
 									true,
-									null
+									null,
+									false
 								);
 							} else {
 								new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings, summary) => {
-									await this.publishToMowen(newTitle, content, tags, autoPublish, settings, true, summary);
+									await this.publishToMowen(newTitle, content, tags, autoPublish, settings, true, summary, false);
 								}).open();
 							}
 						});
@@ -386,7 +383,7 @@ export default class MowenPlugin extends Plugin {
 		// 命令面板：选中内容发布到墨问
 		this.addCommand({
 			id: 'publish-current-selected-text-to-mowen',
-			name: 'Publish Selected Text to Mowen',
+			name: 'Publish selected text to Mowen',
 			checkCallback: (checking: boolean) => {
 				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
 				if (markdownView) {
@@ -418,11 +415,12 @@ export default class MowenPlugin extends Plugin {
 										privacy
 									},
 									false,
-									null
+									null,
+									true
 								);
 							} else {
 								new MowenPublishModal(this.app, content, title, this, async (newTitle, tags, autoPublish, settings, summary) => {
-									await this.publishToMowen(newTitle, content, tags, autoPublish, settings, false, summary);
+									await this.publishToMowen(newTitle, content, tags, autoPublish, settings, false, summary, true);
 								}).open();
 							}
 						});
@@ -548,21 +546,13 @@ export default class MowenPlugin extends Plugin {
 					file = this.app.metadataCache.getFirstLinkpathDest(linkText, sourcePath);
 				}
 
-				// 如果 API 没找到（可能缓存没更新），做一个简单的后备查找
-				if (!file) {
-					const allFiles = this.app.vault.getFiles();
-					// 查找 basename (无后缀) 或 name (有后缀)
-					file = allFiles.find(f => f.basename === linkText || f.name === linkText) ?? null;
-				}
-
 				if (file instanceof TFile) {
 					const fullPath = file.path;
 					// 判断文件类型
 					if (file.extension.toLowerCase() === 'md') {
 						// 处理内嵌的 Markdown 文件
 						new Notice(`正在处理内嵌笔记: ${fullPath}`);
-						const fileContent = await this.app.vault.read(file);
-						const noteId = await this.getNoteIdFromFrontmatter(fileContent);
+						const noteId = this.getNoteIdFromFileCache(file);
 						if (noteId) {
 							content.push({
 								type: 'note',
@@ -703,16 +693,22 @@ export default class MowenPlugin extends Plugin {
 		}
 	}
 
-	async publishToMowen(title: string, content: string, tags: string, autoPublish: boolean, settings: any, writeNoteIdToFrontmatter: boolean = true, summary: string | null = null) {
+	async publishToMowen(title: string, content: string, tags: string, autoPublish: boolean, settings: any, writeNoteIdToFrontmatter: boolean = true, summary: string | null = null, isSelection: boolean = false) {
 		const apiKey = this.settings.apiKey;
 		if (!apiKey) {
-			new Notice('请先在设置中填写 API-KEY');
+			new Notice('请先在设置中填写 API key');
 			return;
 		}
 		const tagArr = tags.split(',').map(t => t.trim()).filter(Boolean);
 		new Notice('正在发布到墨问...');
 		
-		const noteId = await this.getNoteIdFromFrontmatter(content);
+		// 对于选中文本发布，使用 MetadataCache 获取 noteId
+		let noteId: string | null;
+		if (isSelection) {
+			noteId = this.getNoteIdFromCache();
+		} else {
+			noteId = await this.getNoteIdFromFrontmatter(content);
+		}
 
 		settings.tags = tags;
 		// 在这里调用移动后的 markdownToNoteAtom
@@ -750,78 +746,102 @@ export default class MowenPlugin extends Plugin {
 	async addNoteIdToFrontmatter(noteId: string, settings: any) {
 		const activeFile = this.app.workspace.getActiveFile();
 		if (!activeFile) return;
-		const fileContent = await this.app.vault.read(activeFile);
-
-		// 检查是否已有 frontmatter
-		let newContent: string;
-		let frontmatterMatch = fileContent.match(/(^---[\s\S]*?---)/);
-		let currentFrontmatter = '';
-		let contentWithoutFrontmatter = fileContent;
-
-		if (frontmatterMatch) {
-			currentFrontmatter = frontmatterMatch[1];
-			contentWithoutFrontmatter = fileContent.substring(frontmatterMatch[0].length);
-		}
-
-		let frontmatterObj: any = {};
-		if (currentFrontmatter) {
-			// 移除 '---' 边界，解析 YAML
-			const yamlContent = currentFrontmatter.replace(/^---\n|\n---$/g, '');
-			try {
-				frontmatterObj = yaml.load(yamlContent) || {};
-			} catch (e) {
-				console.error('解析现有 frontmatter 失败:', e);
-				// 如果解析失败，则按原样保留现有 frontmatter，只添加 noteId 和新设置
-				frontmatterObj = {};
-			}
-		}
 
 		// 更新或添加 noteId，使用用户自定义的键名
 		const noteIdKey = this.settings.noteIdKey || 'noteId';
-		frontmatterObj[noteIdKey] = noteId;
 
-		// 更新或添加其他设置
-		if (settings) {
-			console.log('更新或添加其他设置:', settings);
-			if (settings.tags) {
-				frontmatterObj.mowenTags = settings.tags; // 使用单独的字段避免与 Obsidian 自身标签冲突
-			}
-			if (typeof settings.auto_publish !== 'undefined') {
-				frontmatterObj.mowenAutoPublish = settings.auto_publish;
-			}
-			if (settings.privacy) {
-				frontmatterObj.mowenPrivacyType = settings.privacy.type;
-				if (settings.privacy.rule) {
-					frontmatterObj.mowenPrivacyNoShare = settings.privacy.rule.noShare;
-					frontmatterObj.mowenPrivacyExpireAt = settings.privacy.rule.expireAt;
+		// 使用 processFrontMatter 来修改 frontmatter
+		await this.app.fileManager.processFrontMatter(activeFile, (fm) => {
+			// 添加或更新 noteId
+			fm[noteIdKey] = noteId;
+
+			// 更新或添加其他设置
+			if (settings) {
+				console.log('更新或添加其他设置:', settings);
+				if (settings.tags) {
+					fm.mowenTags = settings.tags; // 使用单独的字段避免与 Obsidian 自身标签冲突
 				}
+				if (typeof settings.auto_publish !== 'undefined') {
+					fm.mowenAutoPublish = settings.auto_publish;
+				}
+				if (settings.privacy) {
+					fm.mowenPrivacyType = settings.privacy.type;
+					if (settings.privacy.rule) {
+						fm.mowenPrivacyNoShare = settings.privacy.rule.noShare;
+						fm.mowenPrivacyExpireAt = settings.privacy.rule.expireAt;
+					}
+				}
+			}
+		});
+	}
+
+	/**
+	 * Get note ID from file frontmatter using MetadataCache
+	 */
+	getNoteIdFromFileCache(file: TFile): string | null {
+		const fileCache = this.app.metadataCache.getFileCache(file);
+		const frontmatterObj = fileCache?.frontmatter || {};
+		
+		const customKey = this.settings.noteIdKey || 'noteId';
+		const defaultKey = 'noteId';
+
+		// 根据设置，决定要检查哪些key
+		const keysToCheck: string[] = [customKey];
+		if (this.settings.enableLegacyNoteIdFallback && customKey !== defaultKey) {
+			keysToCheck.push(defaultKey);
+		}
+
+		for (const key of keysToCheck) {
+			if (frontmatterObj[key]) {
+				return frontmatterObj[key];
 			}
 		}
 
-		// 重新序列化为 YAML 字符串
-		const updatedYaml = yaml.dump(frontmatterObj);
-		newContent = `---\n${updatedYaml}---\n${contentWithoutFrontmatter.trim()}`;
+		return null;
+	}
 
-		await this.app.vault.modify(activeFile, newContent);
+	/**
+	 * Get note ID from frontmatter using MetadataCache (useful for selections)
+	 */
+	getNoteIdFromCache(): string | null {
+		const frontmatterObj = this.getFrontmatterFromCache();
+		
+		const customKey = this.settings.noteIdKey || 'noteId';
+		const defaultKey = 'noteId';
+
+		// 根据设置，决定要检查哪些key
+		const keysToCheck: string[] = [customKey];
+		if (this.settings.enableLegacyNoteIdFallback && customKey !== defaultKey) {
+			keysToCheck.push(defaultKey);
+		}
+
+		for (const key of keysToCheck) {
+			if (frontmatterObj[key]) {
+				return frontmatterObj[key];
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get frontmatter from active file using MetadataCache (useful for selections)
+	 */
+	getFrontmatterFromCache(): any {
+		const activeFile = this.app.workspace.getActiveFile();
+		if (!activeFile) return {};
+		
+		const fileCache = this.app.metadataCache.getFileCache(activeFile);
+		return fileCache?.frontmatter || {};
 	}
 
 	async getSettingsFromFrontmatter(): Promise<any> {
 		const activeFile = this.app.workspace.getActiveFile();
 		if (!activeFile) return {};
-		const fileContent = await this.app.vault.read(activeFile);
 
-		let frontmatterMatch = fileContent.match(/(^---[\s\S]*?---)/);
-		let frontmatterObj: any = {};
-
-		if (frontmatterMatch) {
-			const yamlContent = frontmatterMatch[1].replace(/^---\n|\n---$/g, '');
-			try {
-				frontmatterObj = yaml.load(yamlContent) || {};
-			} catch (e) {
-				console.error('解析现有 frontmatter 失败:', e);
-				return {};
-			}
-		}
+		// 使用 MetadataCache 获取 frontmatter，避免从磁盘读取文件内容
+		const fileCache = this.app.metadataCache.getFileCache(activeFile);
+		const frontmatterObj = fileCache?.frontmatter || {};
 
 		const loadedSettings: any = {};
 		// 加载标签
@@ -859,12 +879,14 @@ export default class MowenPlugin extends Plugin {
 			keysToCheck.push(defaultKey);
 		}
 
-		const frontmatterMatch = content.match(/(^---[\s\S]*?---)/);
-
-		if (frontmatterMatch) {
-			const yamlContent = frontmatterMatch[1].replace(/^---\n|\n---$/g, '');
+		// 使用 Obsidian 的 getFrontMatterInfo 获取 frontmatter 信息
+		const frontMatterInfo = getFrontMatterInfo(content);
+		
+		if (frontMatterInfo.exists) {
 			try {
-				const frontmatterObj: any = yaml.load(yamlContent);
+				// 使用 parseYaml 解析 frontmatter
+				const frontmatterObj = parseYaml(frontMatterInfo.frontmatter);
+				
 				if (frontmatterObj && typeof frontmatterObj === 'object') {
 					for (const key of keysToCheck) {
 						if (frontmatterObj[key]) {
@@ -873,21 +895,14 @@ export default class MowenPlugin extends Plugin {
 					}
 				}
 			} catch (e) {
-				console.error('解析 frontmatter 失败，回退到正则匹配:', e);
-				// 如果YAML解析失败，在YAML块内尝试用简单的正则作为后备
+				console.error('解析 frontmatter 失败:', e);
+				// 如果解析失败，回退到简单的正则匹配
 				for (const key of keysToCheck) {
 					const regex = new RegExp(`^${key}:\\s*(\\S+)`, 'm');
-					const match = yamlContent.match(regex);
+					const match = frontMatterInfo.frontmatter.match(regex);
 					if (match) return match[1];
 				}
 			}
-		}
-		
-		// 如果没有 frontmatter 或解析失败，最后尝试一次全局正则匹配
-		for (const key of keysToCheck) {
-			const regex = new RegExp(`${key}:\\s*(\\S+)`);
-			const match = content.match(regex);
-			if (match) return match[1];
 		}
 
 		return null;
@@ -899,22 +914,15 @@ export default class MowenPlugin extends Plugin {
 			return file.basename;
 		}
 
-		const fileContent = await this.app.vault.read(file);
-		const frontmatterMatch = fileContent.match(/(^---[\s\S]*?---)/);
+		// 使用 MetadataCache 获取 frontmatter，避免从磁盘读取文件内容
+		const fileCache = this.app.metadataCache.getFileCache(file);
+		const frontmatterObj = fileCache?.frontmatter || {};
 
-		if (frontmatterMatch) {
-			const yamlContent = frontmatterMatch[1].replace(/^---\n|\n---$/g, '');
-			try {
-				const frontmatterObj: any = yaml.load(yamlContent);
-				if (frontmatterObj && typeof frontmatterObj === 'object' && frontmatterObj[titleKey]) {
-					return frontmatterObj[titleKey];
-				}
-			} catch (e) {
-				console.error(`解析 frontmatter 失败 (${file.path}):`, e);
-			}
+		if (frontmatterObj[titleKey]) {
+			return frontmatterObj[titleKey];
 		}
 
-		// 如果没有找到key或者解析失败，回退到文件名
+		// 如果没有找到key，回退到文件名
 		return file.basename;
 	}
 }

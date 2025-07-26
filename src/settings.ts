@@ -14,7 +14,7 @@ export interface GlobalPublishConfig {
   autoPublish: boolean; // 是否自动发布
   tags: string; // 全局标签，英文逗号分隔
   privacy: {
-    type: 'public' | 'private' | 'rule'; // 隐私类型
+    type: 'private' | 'public' | 'rule'; // 隐私类型
     rule?: {
       noShare: boolean; // 是否禁止分享
       expireAt: number; // 公开截止时间（秒时间戳，0为永久）
@@ -53,7 +53,7 @@ export const DEFAULT_SETTINGS: MowenPluginSettings = {
     autoPublish: true,
     tags: '',
     privacy: {
-      type: 'public',
+      type: 'private',
       rule: {
         noShare: false,
         expireAt: 0
@@ -75,13 +75,13 @@ export class MowenSettingTab extends PluginSettingTab {
     containerEl.empty();
 
     // 墨问发布设置
-    containerEl.createEl('h2', { text: '墨问发布设置' });
+    // new Setting(containerEl).setName('墨问发布').setHeading();
 
     new Setting(containerEl)
-      .setName('API-KEY')
-      .setDesc('请输入你的墨问 API-KEY')
+      .setName('API key')
+      .setDesc('请输入你的墨问 API key')
       .addText(text => text
-        .setPlaceholder('Enter your API-KEY')
+        .setPlaceholder('Enter your API key')
         .setValue(this.plugin.settings.apiKey)
         .onChange(async (value) => {
           this.plugin.settings.apiKey = value;
@@ -141,7 +141,7 @@ export class MowenSettingTab extends PluginSettingTab {
         }));
 
     // 全局发布配置
-    containerEl.createEl('h2', { text: '全局发布配置' });
+    new Setting(containerEl).setName('全局发布').setHeading();
 
     new Setting(containerEl)
       .setName('启用全局发布配置')
@@ -182,12 +182,12 @@ export class MowenSettingTab extends PluginSettingTab {
         .setName('隐私类型')
         .setDesc('选择发布笔记的隐私类型')
         .addDropdown(drop => {
-          drop.addOption('public', '公开');
           drop.addOption('private', '私有');
+          drop.addOption('public', '公开');
           drop.addOption('rule', '规则');
           drop.setValue(this.plugin.settings.globalPublishConfig.privacy.type);
           drop.onChange(async (value) => {
-            this.plugin.settings.globalPublishConfig.privacy.type = value as 'public' | 'private' | 'rule';
+            this.plugin.settings.globalPublishConfig.privacy.type = value as 'private' | 'public' | 'rule';
             await this.plugin.saveSettings();
             this.display(); // 切换时刷新UI
           });
@@ -237,7 +237,7 @@ export class MowenSettingTab extends PluginSettingTab {
     }
 
     // AI 功能设置
-    containerEl.createEl('h2', { text: 'AI 功能设置' });
+    new Setting(containerEl).setName('AI 功能').setHeading();
 
     new Setting(containerEl)
       .setName('AI 服务商')
@@ -255,10 +255,10 @@ export class MowenSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName('API Key')
-      .setDesc('请输入所选 AI 服务商的 API Key')
+      .setName('API key')
+      .setDesc('请输入所选 AI 服务商的 API key')
       .addText(text => text
-        .setPlaceholder('在此输入 API Key')
+        .setPlaceholder('在此输入 API key')
         .setValue(this.plugin.settings.llmSettings.apiKey)
         .onChange(async (value) => {
           this.plugin.settings.llmSettings.apiKey = value;
