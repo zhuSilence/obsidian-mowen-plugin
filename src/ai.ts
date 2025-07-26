@@ -48,10 +48,6 @@ ${summaryInstruction}
         };
 
         try {
-            // 在请求前打印日志
-            console.log('DeepSeek API Request URL:', url);
-            console.log('DeepSeek API Request Body:', JSON.stringify(requestBody, null, 2));
-
             const response = await requestUrl({
                 url: url,
                 method: 'POST',
@@ -61,10 +57,6 @@ ${summaryInstruction}
                 },
                 body: JSON.stringify(requestBody),
             });
-
-            // 在收到响应后打印日志
-            console.log('DeepSeek API Response:', response);
-
             const data = response.json;
             if (data.choices && data.choices.length > 0) {
                 const resultText = data.choices[0].message.content;

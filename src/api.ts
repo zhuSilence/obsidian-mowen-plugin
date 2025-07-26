@@ -1,4 +1,4 @@
-import { getFrontMatterInfo, parseYaml } from 'obsidian';
+import { getFrontMatterInfo, parseYaml, requestUrl } from 'obsidian';
 
 export interface PublishNoteParams {
   noteId?: string | null;
@@ -29,7 +29,8 @@ export async function publishNoteToMowen(params: PublishNoteParams): Promise<Pub
     url = `${baseUrl}/note/create`;
   }
   try {
-    const response = await fetch(url, {
+    const response = await requestUrl({
+      url: url,
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -45,15 +46,15 @@ export async function publishNoteToMowen(params: PublishNoteParams): Promise<Pub
       }),
     });
 
-    const result = await response.json();
+    const result = response.json;
 
     //  result.noteId 不等于空时发布成功
-    if (response.ok && result.noteId !== "") {
+    if (response.status === 200 && result.noteId !== "") {
       // 发布成功的情况下，根据 settings 的内容进行笔记的隐私设置
-      console.log(settings)
       if (settings.section === 1) {
         // 调用更新 settings path /api/open/api/v1/note/set
-        let settingResponse = await fetch(baseUrl + `/note/set`, {
+        let settingResponse = await requestUrl({
+          url: baseUrl + `/note/set`,
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -67,8 +68,7 @@ export async function publishNoteToMowen(params: PublishNoteParams): Promise<Pub
             }
           })
         });
-        const settingResult = await settingResponse.json();
-        // console.log("setting Result " + settingResult);
+        const settingResult = settingResponse.json;
       }
       return {
         success: true,
@@ -97,7 +97,8 @@ export async function publishNoteToMowen(params: PublishNoteParams): Promise<Pub
  */
 export async function getUploadAuthorization(apiKey: string, fileType: number): Promise<any> {
   try {
-    const response = await fetch(`${baseUrl}/upload/prepare`, {
+    const response = await requestUrl({
+      url: `${baseUrl}/upload/prepare`,
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -108,9 +109,8 @@ export async function getUploadAuthorization(apiKey: string, fileType: number): 
         // 根据文档，这里可能需要传入文件类型、文件名等，但目前文档中没有明确要求，先留空
       }),
     });
-    const result = await response.json();
-    // console.log(result)
-    if (response.ok && result.form) {
+    const result = response.json;
+    if (response.status === 200 && result.form) {
       return { success: true, data: result.form };
     } else {
       return { success: false, message: result.msg || "获取上传授权失败", data: result };
@@ -137,10 +137,10 @@ export async function deliverFile(endpoint: string, authInfo: any, fileBlob: Blo
   formData.append('file', fileBlob, fileName); // 投递文件
 
   try {
+    // 对于 FormData，我们需要继续使用 fetch，因为 requestUrl 可能不完全支持 FormData
     const response = await fetch(endpoint, {
       method: "POST",
       body: formData,
-      redirect: 'follow'
       // 注意：这里不需要设置 Content-Type，FormData 会自动设置
     });
     const result = await response.json();

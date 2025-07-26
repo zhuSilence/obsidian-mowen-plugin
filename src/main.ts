@@ -35,8 +35,6 @@ class MowenPublishModal extends Modal {
 		// 只有在首次打开时才加载现有设置
 		if (!this.initialLoadDone) {
 			const loadedSettings = await this.plugin.getSettingsFromFrontmatter();
-			console.log('Loaded Settings:', loadedSettings);
-
 			// 使用加载的设置（如果存在）初始化模态框的状态
 			this.tags = loadedSettings.tags ? loadedSettings.tags : markdownTagsToNoteAtomTags(this.content, this.plugin.settings.defaultTag).tags.join(',');
 			this.autoPublish = typeof loadedSettings.autoPublish !== 'undefined' ? loadedSettings.autoPublish : this.plugin.settings.autoPublish;
@@ -113,7 +111,6 @@ class MowenPublishModal extends Modal {
 
 								if (result.summary) {
 									this.summary = result.summary;
-									console.log('AI 生成的摘要:', this.summary);
 									new Notice('AI 生成成功，摘要已保存！');
 								} else {
 									this.summary = null;
@@ -757,7 +754,6 @@ export default class MowenPlugin extends Plugin {
 
 			// 更新或添加其他设置
 			if (settings) {
-				console.log('更新或添加其他设置:', settings);
 				if (settings.tags) {
 					fm.mowenTags = settings.tags; // 使用单独的字段避免与 Obsidian 自身标签冲突
 				}
