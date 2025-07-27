@@ -1,6 +1,6 @@
 import { App, Editor, MarkdownView, Notice, Plugin, Setting, Menu, TextComponent, Modal, TFile, getFrontMatterInfo, parseYaml, stringifyYaml } from 'obsidian';
 import { MowenSettingTab, DEFAULT_SETTINGS, MowenPluginSettings } from "./settings";
-import { publishNoteToMowen, markdownTagsToNoteAtomTags, getUploadAuthorization, deliverFile, getFileType, getMimeType } from "./api";
+import { publishNoteToMowen, markdownTagsToNoteAtomTags, getUploadAuthorization, deliverFile, getFileType, getMimeType, getFileTypeName } from "./api";
 import { generateNoteMetadata } from "./ai"; // 导入AI生成函数
 
 // 发布弹窗 Modal
@@ -122,7 +122,7 @@ class MowenPublishModal extends Modal {
 							console.error(error);
 							this.renderSettings(); // 即使失败也重绘，恢复按钮
 						}
-				});
+					});
 			});
 
 		new Setting(contentEl)
@@ -163,7 +163,7 @@ class MowenPublishModal extends Modal {
 				.addDropdown(drop => {
 					drop.addOption('private', '私有');
 					drop.addOption('public', '公开');
-					drop.addOption('rule', '规则');					
+					drop.addOption('rule', '规则');
 					drop.setValue('private');
 					drop.onChange(value => {
 						this.privacy = value;
@@ -562,17 +562,20 @@ export default class MowenPlugin extends Plugin {
 						const fileBlob = new Blob([await this.app.vault.readBinary(file)], { type: mimeType });
 						const fName = file.name;
 						const fileType = getFileType(file.extension);
+						const fileTypeName = getFileTypeName(fileType);
 						const authRes = await getUploadAuthorization(this.settings.apiKey, fileType);
 						if (authRes.success && authRes.data.endpoint) {
 							const uploadRes = await deliverFile(authRes.data.endpoint, authRes.data, fileBlob, fName);
 							if (uploadRes.success && uploadRes.data) {
-						content.push({
-									type: 'image',
-									attrs: {
-										uuid: uploadRes.data.fileId,
-										align: 'center',
-										alt: fName
-									}
+								let uuidKey = fileType == 2 ? 'audio-uuid' : 'uuid';
+								let attr = {
+									[uuidKey]: uploadRes.data.fileId,
+									align: 'center',
+									alt: fName
+								};
+								content.push({
+									type: fileTypeName,
+									attrs: attr
 								});
 								new Notice(`图片上传成功: ${fName}`);
 							} else {
@@ -688,7 +691,7 @@ export default class MowenPlugin extends Plugin {
 		}
 		const tagArr = tags.split(',').map(t => t.trim()).filter(Boolean);
 		new Notice('正在发布到墨问...');
-		
+
 		// 对于选中文本发布，不传递 noteId，因为这是新笔记
 		let noteId: string | null;
 		if (isSelection) {
@@ -767,7 +770,7 @@ export default class MowenPlugin extends Plugin {
 	getNoteIdFromFileCache(file: TFile): string | null {
 		const fileCache = this.app.metadataCache.getFileCache(file);
 		const frontmatterObj = fileCache?.frontmatter || {};
-		
+
 		const customKey = this.settings.noteIdKey || 'noteId';
 		const defaultKey = 'noteId';
 
@@ -791,7 +794,7 @@ export default class MowenPlugin extends Plugin {
 	 */
 	getNoteIdFromCache(): string | null {
 		const frontmatterObj = this.getFrontmatterFromCache();
-		
+
 		const customKey = this.settings.noteIdKey || 'noteId';
 		const defaultKey = 'noteId';
 
@@ -816,7 +819,7 @@ export default class MowenPlugin extends Plugin {
 	getFrontmatterFromCache(): any {
 		const activeFile = this.app.workspace.getActiveFile();
 		if (!activeFile) return {};
-		
+
 		const fileCache = this.app.metadataCache.getFileCache(activeFile);
 		return fileCache?.frontmatter || {};
 	}
@@ -867,12 +870,12 @@ export default class MowenPlugin extends Plugin {
 
 		// 使用 Obsidian 的 getFrontMatterInfo 获取 frontmatter 信息
 		const frontMatterInfo = getFrontMatterInfo(content);
-		
+
 		if (frontMatterInfo.exists) {
 			try {
 				// 使用 parseYaml 解析 frontmatter
 				const frontmatterObj = parseYaml(frontMatterInfo.frontmatter);
-				
+
 				if (frontmatterObj && typeof frontmatterObj === 'object') {
 					for (const key of keysToCheck) {
 						if (frontmatterObj[key]) {

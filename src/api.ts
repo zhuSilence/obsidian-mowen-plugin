@@ -29,6 +29,15 @@ export async function publishNoteToMowen(params: PublishNoteParams): Promise<Pub
     url = `${baseUrl}/note/create`;
   }
   try {
+
+    let bb = JSON.stringify({
+      "noteId": noteId,
+      "body": {
+        "type": "doc",
+        "content": body,
+      },
+      "settings": settings
+    });
     const response = await requestUrl({
       url: url,
       method: "POST",
@@ -36,14 +45,7 @@ export async function publishNoteToMowen(params: PublishNoteParams): Promise<Pub
         "Content-Type": "application/json",
         "Authorization": `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({
-        "noteId": noteId,
-        "body": {
-          "type": "doc",
-          "content": body,
-        },
-        "settings": settings
-      }),
+      body: bb
     });
 
     const result = response.json;
@@ -202,6 +204,7 @@ export function getFileType(extension: string): number {
     'jpg': 1,
     'jpeg': 1,
     'gif': 1,
+    'wav': 2,
     'mp3': 2,
     'mp4': 2,
     'pdf': 3
@@ -220,8 +223,22 @@ export function getMimeType(extension: string): string {
     'jpeg': 'image/jpeg',
     'gif': 'image/gif',
     'mp3': 'audio/mpeg',
-    'mp4': 'video/mp4',
+    'wav': 'audio/mpeg',
+    'mp4': 'audio/mp4',
     'pdf': 'application/pdf',
   };
   return mimeTypes[extension.toLowerCase()] || 'application/octet-stream';
+}
+
+/**
+ * 根据文件类型获取文件名
+ * @param {number} fileType - 文件类型
+ * @returns {string} 文件名
+ */
+export function getFileTypeName(fileType: number): string { 
+  return {
+    1: 'image',
+    2: 'audio',
+    3: 'pdf'
+  }[fileType] || '未知';
 }
