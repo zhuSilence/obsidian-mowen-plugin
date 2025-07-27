@@ -164,7 +164,7 @@ class MowenPublishModal extends Modal {
 					drop.addOption('private', '私有');
 					drop.addOption('public', '公开');
 					drop.addOption('rule', '规则');
-					drop.setValue('private');
+					drop.setValue(this.privacy);
 					drop.onChange(value => {
 						this.privacy = value;
 						this.renderSettings(); // 只重新渲染设置部分
