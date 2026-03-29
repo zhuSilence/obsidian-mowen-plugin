@@ -745,36 +745,42 @@ export default class MowenPlugin extends Plugin {
 				continue;
 			}
 
-			// 4. 处理普通文本（包括加粗和链接的组合）
+			// 4. 处理普通文本（包括加粗、高亮和链接的组合）
 			if (line !== '') {
 				const parts: { type: string; text: string; marks: any[] }[] = [];
 				const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
 				let lastIndex = 0;
 				let match;
+				
+				// 跟踪当前的 bold/highlight 状态（用于链接叠加）
+				let currentFormatMarks: any[] = [];
 
 				while ((match = linkRegex.exec(line)) !== null) {
-					// 处理链接前的普通文本（无 link baseMarks）
+					// 处理链接前的文本（包括 ** 和 == 标记）
 					if (match.index > lastIndex) {
 						const textBeforeLink = line.slice(lastIndex, match.index);
-						this.processBoldText(textBeforeLink, parts, []);
+						// processBoldText 会处理格式标记并返回结束时的状态
+						currentFormatMarks = this.processBoldText(textBeforeLink, parts, []);
 					}
 					
-					// 处理链接：链接文本内部也可能有 bold 标记
-					// 例如 **[链接](url)** 或 [**链接**](url)
+					// 处理链接：叠加外层的 bold/highlight 状态
 					const linkText = match[1];
 					const linkHref = match[2];
 					const linkMark = { type: 'link', attrs: { href: linkHref } };
 					
-					// 使用 processBoldText 处理链接文本，叠加 link mark
-					this.processBoldText(linkText, parts, [linkMark]);
+					// 组合 marks：外层格式 + link
+					const combinedMarks = [...currentFormatMarks, linkMark];
+					
+					// 处理链接文本内部可能的格式标记（如 [**链接**](url)）
+					this.processBoldText(linkText, parts, combinedMarks);
 					
 					lastIndex = match.index + match[0].length;
 				}
 
-				// 处理链接后的剩余文本（无 link baseMarks）
+				// 处理链接后的剩余文本
 				if (lastIndex < line.length) {
 					const remainingText = line.slice(lastIndex);
-					this.processBoldText(remainingText, parts, []);
+					this.processBoldText(remainingText, parts, currentFormatMarks);
 				}
 
 				if (parts.length > 0) {
@@ -795,6 +801,7 @@ export default class MowenPlugin extends Plugin {
 	 * @param textSegment - 文本片段
 	 * @param partsArray - 输出的 NoteAtom parts 数组
 	 * @param baseMarks - 基础 marks 数组（如 link），用于叠加 bold/highlight
+	 * @returns 结束时的 marks 状态（用于传递给下一个处理）
 	 * 
 	 * 支持场景：
 	 * - **普通加粗** → marks: [{ type: 'bold' }]
@@ -802,7 +809,7 @@ export default class MowenPlugin extends Plugin {
 	 * - **==加粗高亮==** → marks: [{ type: 'bold' }, { type: 'highlight' }]
 	 * - **[链接](url)** → marks: [{ type: 'bold' }, { type: 'link', attrs: { href: 'url' } }]
 	 */
-	processBoldText(textSegment: string, partsArray: any[], baseMarks: any[] = []) {
+	processBoldText(textSegment: string, partsArray: any[], baseMarks: any[] = []): any[] {
 		let currentText = '';
 		// 当前激活的 marks，从 baseMarks 开始叠加
 		let activeMarks: any[] = [...baseMarks];
@@ -869,6 +876,9 @@ export default class MowenPlugin extends Plugin {
 				marks: activeMarks.length > 0 ? [...activeMarks] : [...baseMarks]
 			});
 		}
+		
+		// 返回结束时的 marks 状态（用于传递给链接处理）
+		return activeMarks.filter(m => m.type === 'bold' || m.type === 'highlight');
 	}
 
 	async publishToMowen(title: string, content: string, tags: string, autoPublish: boolean, settings: any, writeNoteIdToFrontmatter: boolean = true, summary: string | null = null, isSelection: boolean = false) {
