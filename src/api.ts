@@ -1,4 +1,13 @@
-import { getFrontMatterInfo, parseYaml, requestUrl } from 'obsidian';
+import { getFrontMatterInfo, parseYaml, requestUrl, Notice } from 'obsidian';
+import {
+  MowenError,
+  MowenErrorCode,
+  classifyApiError,
+  classifyNetworkError,
+  withRetry,
+  DEFAULT_RETRY_CONFIG,
+  BatchErrorCollector
+} from './utils/errorHandler';
 
 /**
  * NoteAtom 文本标记接口
@@ -52,6 +61,7 @@ export interface UploadAuthResponse {
     [key: string]: string; // 其他表单字段
   } | null;
   message?: string;
+  error?: MowenError; // 新增：结构化错误对象
 }
 
 /**
@@ -65,6 +75,7 @@ export interface FileUploadResponse {
     };
   } | null;
   message?: string;
+  error?: MowenError; // 新增：结构化错误对象
 }
 
 export interface PublishNoteParams {
@@ -76,198 +87,464 @@ export interface PublishNoteParams {
   autoPublish?: boolean;
   settings?: PublishSettings;
   body: NoteAtomNode[];
+  enableRetry?: boolean; // 新增：是否启用重试
 }
 
 export interface PublishNoteResult {
   success: boolean;
   message: string;
   data?: any;
+  error?: MowenError; // 新增：结构化错误对象
 }
-// 
-const baseUrl = "https://open.mowen.cn/api/open/api/v1";
-export async function publishNoteToMowen(params: PublishNoteParams): Promise<PublishNoteResult> {
-  const { noteId, apiKey, title, content, tags, autoPublish, settings, body } = params;
-  let url;
-  if (noteId) {
-    // 更新笔记 path 为 /api/open/api/v1/note/edit
-    url = `${baseUrl}/note/edit`;
-  } else {
-    // 创建笔记 path 为 /api/open/api/v1/note/create
-    url = `${baseUrl}/note/create`;
-  }
-  try {
 
-    let bb = JSON.stringify({
-      "noteId": noteId,
-      "body": {
-        "type": "doc",
-        "content": body,
-      },
-      "settings": settings
-    });
+/** API 基础地址 */
+const baseUrl = "https://open.mowen.cn/api/open/api/v1";
+
+/** 默认请求超时时间（毫秒） */
+const DEFAULT_TIMEOUT = 30000;
+
+/** 文件上传超时时间（毫秒） */
+const UPLOAD_TIMEOUT = 60000;
+
+/**
+ * 安全的 requestUrl 包装函数
+ * 提供统一的超时、错误处理和日志记录
+ */
+async function safeRequest(
+  url: string,
+  method: string,
+  headers: Record<string, string>,
+  body?: string,
+  timeout: number = DEFAULT_TIMEOUT
+): Promise<{ status: number; json: any }> {
+  try {
     const response = await requestUrl({
-      url: url,
-      method: "POST",
-      headers: {
+      url,
+      method,
+      headers,
+      body,
+      timeout
+    } as any);
+    
+    return {
+      status: response.status,
+      json: response.json
+    };
+  } catch (error: any) {
+    // requestUrl 可能抛出多种错误格式
+    const err = error as any;
+    
+    // 如果有 status 属性，说明是 HTTP 错误
+    if (err.status) {
+      throw classifyApiError(err.status, err.json || {}, error);
+    }
+    
+    // 否则是网络错误
+    throw classifyNetworkError(error);
+  }
+}
+
+/**
+ * 发布/更新笔记到墨问
+ * 
+ * 改进：
+ * 1. 添加重试机制（可选）
+ * 2. 完善的 HTTP 状态码处理
+ * 3. 二次 API 调用（设置隐私）的错误处理
+ * 4. 结构化错误返回
+ */
+export async function publishNoteToMowen(params: PublishNoteParams): Promise<PublishNoteResult> {
+  const { 
+    noteId, 
+    apiKey, 
+    title, 
+    content, 
+    tags, 
+    autoPublish, 
+    settings, 
+    body, 
+    enableRetry = true 
+  } = params;
+  
+  // 验证 API Key
+  if (!apiKey || apiKey.trim() === '') {
+    const error = new MowenError(MowenErrorCode.CONFIG_API_KEY_MISSING);
+    return {
+      success: false,
+      message: error.getUserMessage().title,
+      error
+    };
+  }
+  
+  // 确定 API 路径
+  const url = noteId 
+    ? `${baseUrl}/note/edit` 
+    : `${baseUrl}/note/create`;
+  
+  // 构建请求体
+  const requestBody = JSON.stringify({
+    noteId,
+    body: {
+      type: "doc",
+      content: body,
+    },
+    settings
+  });
+  
+  // 主请求操作
+  const mainOperation = async () => {
+    const response = await safeRequest(
+      url,
+      "POST",
+      {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${apiKey}`,
       },
-      body: bb,
-      timeout: 30000
-    } as any);
-
+      requestBody
+    );
+    
     const result = response.json;
-
-    //  result.noteId 不等于空时发布成功
-    if (response.status === 200 && result.noteId !== "") {
-      // 发布成功的情况下，根据 settings 的内容进行笔记的隐私设置
-      if (settings && settings.section === 1) {
-        // 调用更新 settings path /api/open/api/v1/note/set
-        let settingResponse = await requestUrl({
-          url: baseUrl + `/note/set`,
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            "noteId": result.noteId,
-            "section": settings?.section ?? 1,
-            "settings": {
-              "privacy": settings?.privacy
-            }
-          }),
-          timeout: 30000
-        } as any);
-        const settingResult = settingResponse.json;
-      }
-      return {
-        success: true,
-        message: "发布成功",
-        data: result.noteId,
-      };
-    } else {
-      return {
-        success: false,
-        message: result.msg || "发布失败",
-        data: result,
-      };
+    
+    // 检查 HTTP 状态和业务返回
+    if (response.status !== 200) {
+      throw classifyApiError(response.status, result, undefined);
     }
+    
+    // 业务成功检查
+    if (!result.noteId || result.noteId === "") {
+      throw new MowenError(
+        MowenErrorCode.API_BUSINESS_ERROR,
+        result.msg || result.message || "发布失败，未获取到笔记ID"
+      );
+    }
+    
+    return result;
+  };
+  
+  try {
+    // 执行主请求（可选重试）
+    const result = enableRetry 
+      ? await withRetry(mainOperation, DEFAULT_RETRY_CONFIG, (attempt, err) => {
+          console.log(`[Mowen] 发布请求第 ${attempt} 次重试，原因: ${err.getUserMessage().title}`);
+        })
+      : await mainOperation();
+    
+    // === 二次 API 调用：设置隐私 ===
+    // 只有需要设置隐私时才执行
+    if (settings && settings.section === 1 && settings.privacy) {
+      try {
+        await updateNotePrivacy(result.noteId, apiKey, settings);
+      } catch (privacyError) {
+        // 隐私设置失败不应影响整体发布结果，但需记录警告
+        console.warn('[Mowen] 隐私设置更新失败:', privacyError);
+        // 显示 Notice 提示用户
+        if (privacyError instanceof MowenError) {
+          new Notice(`笔记已发布，但隐私设置更新失败: ${privacyError.getUserMessage().title}`, 5000);
+        } else {
+          new Notice('笔记已发布，但隐私设置更新失败', 5000);
+        }
+      }
+    }
+    
+    return {
+      success: true,
+      message: "发布成功",
+      data: result.noteId,
+    };
+    
   } catch (error: any) {
+    const mowenError = error instanceof MowenError 
+      ? error 
+      : classifyNetworkError(error as Error);
+    
     return {
       success: false,
-      message: error.message || "网络错误",
+      message: mowenError.getUserMessage().title,
+      error: mowenError,
+      data: error
     };
   }
 }
 
 /**
- * 获取文件上传授权信息
- * @param {string} apiKey - 墨问 API Key
- * @param {number} fileType - 文件类型：1-图片 2-音频 3-PDF
- * @returns {Promise<UploadAuthResponse>} 上传授权信息
+ * 更新笔记隐私设置（内部函数）
  */
-export async function getUploadAuthorization(apiKey: string, fileType: number): Promise<UploadAuthResponse> {
-  try {
-    const response = await requestUrl({
-      url: `${baseUrl}/upload/prepare`,
-      method: "POST",
-      headers: {
+async function updateNotePrivacy(
+  noteId: string, 
+  apiKey: string, 
+  settings: PublishSettings
+): Promise<void> {
+  const response = await safeRequest(
+    `${baseUrl}/note/set`,
+    "POST",
+    {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+    },
+    JSON.stringify({
+      noteId,
+      section: settings?.section ?? 1,
+      settings: {
+        privacy: settings?.privacy
+      }
+    })
+  );
+  
+  if (response.status !== 200) {
+    throw classifyApiError(response.status, response.json, undefined);
+  }
+}
+
+/**
+ * 获取文件上传授权信息
+ * 
+ * 改进：
+ * 1. 添加超时参数
+ * 2. 完善错误处理
+ * 3. 返回结构化错误
+ */
+export async function getUploadAuthorization(
+  apiKey: string, 
+  fileType: number,
+  options?: { timeout?: number; enableRetry?: boolean }
+): Promise<UploadAuthResponse> {
+  const timeout = options?.timeout ?? DEFAULT_TIMEOUT;
+  const enableRetry = options?.enableRetry ?? true;
+  
+  // 验证 API Key
+  if (!apiKey || apiKey.trim() === '') {
+    return {
+      success: false,
+      message: '缺少 API Key',
+      error: new MowenError(MowenErrorCode.CONFIG_API_KEY_MISSING)
+    };
+  }
+  
+  const operation = async () => {
+    const response = await safeRequest(
+      `${baseUrl}/upload/prepare`,
+      "POST",
+      {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({
-        fileType: fileType
-        // 根据文档，这里可能需要传入文件类型、文件名等，但目前文档中没有明确要求，先留空
-      }),
-      timeout: 30000
-    } as any);
-    const result = response.json;
-    if (response.status === 200 && result.form) {
-      return { success: true, data: result.form };
-    } else {
-      return { success: false, message: result.msg || "获取上传授权失败", data: null };
+      JSON.stringify({ fileType }),
+      timeout
+    );
+    
+    if (response.status !== 200 || !response.json.form) {
+      throw classifyApiError(
+        response.status,
+        response.json,
+        undefined
+      );
     }
+    
+    return response.json.form;
+  };
+  
+  try {
+    const form = enableRetry 
+      ? await withRetry(operation)
+      : await operation();
+    
+    return { 
+      success: true, 
+      data: form 
+    };
   } catch (error: any) {
-    return { success: false, message: error.message || "网络错误" };
+    const mowenError = error instanceof MowenError 
+      ? error 
+      : classifyNetworkError(error as Error);
+    
+    return { 
+      success: false, 
+      message: mowenError.getUserMessage().title,
+      error: mowenError
+    };
   }
 }
 
 /**
  * 执行文件投递上传
- * @param {string} endpoint - 上传端点
- * @param {Record<string, string>} authInfo - 授权信息
- * @param {Blob} fileBlob - 文件内容的 Blob
- * @param {string} fileName - 文件名
- * @returns {Promise<FileUploadResponse>} 上传结果
+ * 
+ * 改进：
+ * 1. 统一使用 requestUrl 替代 fetch（支持超时）
+ * 2. 完善错误处理和重试
+ * 3. 返回结构化错误
+ * 
+ * 注意：FormData 上传需要特殊处理，requestUrl 不完全支持
+ * 因此保留 fetch 但添加超时 AbortController
  */
-export async function deliverFile(endpoint: string, authInfo: Record<string, string>, fileBlob: Blob, fileName: string): Promise<FileUploadResponse> {
-  const formData = new FormData();
-  // 根据文档，将授权信息添加到 formData
-  for (const key in authInfo) {
-    formData.append(key, authInfo[key]);
-  }
-  formData.append('file', fileBlob, fileName); // 投递文件
-
-  try {
-    // 对于 FormData，我们需要继续使用 fetch，因为 requestUrl 可能不完全支持 FormData
-    const response = await fetch(endpoint, {
-      method: "POST",
-      body: formData,
-      // 注意：这里不需要设置 Content-Type，FormData 会自动设置
-    });
-    const result = await response.json();
-    if (response.ok && result.file) { // 假设成功返回 uuid
-      return { success: true, data: result.file };
-    } else {
-      return { success: false, message: result.msg || "文件上传失败", data: null };
+export async function deliverFile(
+  endpoint: string, 
+  authInfo: Record<string, string>, 
+  fileBlob: Blob, 
+  fileName: string,
+  options?: { timeout?: number; enableRetry?: boolean }
+): Promise<FileUploadResponse> {
+  const timeout = options?.timeout ?? UPLOAD_TIMEOUT;
+  const enableRetry = options?.enableRetry ?? true;
+  
+  const operation = async (): Promise<FileUploadResponse> => {
+    // 构建 FormData
+    const formData = new FormData();
+    for (const key in authInfo) {
+      formData.append(key, authInfo[key]);
     }
+    formData.append('file', fileBlob, fileName);
+    
+    // 使用 AbortController 实现超时
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => abortController.abort(), timeout);
+    
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        body: formData,
+        signal: abortController.signal
+      });
+      
+      clearTimeout(timeoutId);
+      
+      const result = await response.json();
+      
+      if (!response.ok) {
+        // 分类 HTTP 错误
+        throw classifyApiError(response.status, result, undefined);
+      }
+      
+      if (!result.file) {
+        throw new MowenError(
+          MowenErrorCode.FILE_UPLOAD_FAILED,
+          result.msg || result.message || "上传响应格式错误"
+        );
+      }
+      
+      return { 
+        success: true, 
+        data: result.file 
+      };
+      
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      
+      // 处理 AbortError（超时）
+      if (error.name === 'AbortError') {
+        throw new MowenError(MowenErrorCode.NETWORK_TIMEOUT, `上传超时(${timeout}ms)`);
+      }
+      
+      // 其他错误
+      if (error instanceof MowenError) {
+        throw error;
+      }
+      
+      throw classifyNetworkError(error as Error);
+    }
+  };
+  
+  try {
+    if (enableRetry) {
+      // 文件上传重试需要重新获取授权信息，这里只做简单重试
+      return await withRetry(operation, {
+        ...DEFAULT_RETRY_CONFIG,
+        maxRetries: 1 // 文件上传只重试一次，避免重复消耗带宽
+      });
+    }
+    return await operation();
   } catch (error: any) {
-    return { success: false, message: error.message || "网络错误" };
+    const mowenError = error instanceof MowenError 
+      ? error 
+      : classifyNetworkError(error as Error);
+    
+    return { 
+      success: false, 
+      message: mowenError.getUserMessage().title,
+      error: mowenError
+    };
   }
+}
+
+/**
+ * 批量文件上传（带错误聚合）
+ * 用于处理包含多个图片/文件的笔记
+ */
+export async function batchUploadFiles(
+  apiKey: string,
+  files: Array<{ blob: Blob; name: string; fileType: number }>
+): Promise<Array<{ success: boolean; fileId?: string; error?: MowenError }>> {
+  const results: Array<{ success: boolean; fileId?: string; error?: MowenError }> = [];
+  const errorCollector = new BatchErrorCollector();
+  
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    
+    // 获取上传授权
+    const authRes = await getUploadAuthorization(apiKey, file.fileType);
+    if (!authRes.success || !authRes.data) {
+      errorCollector.add(i, authRes.error!, file.name);
+      results.push({ success: false, error: authRes.error! });
+      continue;
+    }
+    
+    // 执行上传
+    const uploadRes = await deliverFile(
+      authRes.data.endpoint,
+      authRes.data as Record<string, string>,
+      file.blob,
+      file.name
+    );
+    
+    if (uploadRes.success && uploadRes.data) {
+      results.push({ 
+        success: true, 
+        fileId: uploadRes.data.file?.fileId 
+      });
+    } else {
+      errorCollector.add(i, uploadRes.error!, file.name);
+      results.push({ success: false, error: uploadRes.error! });
+    }
+  }
+  
+  // 显示汇总提示
+  if (errorCollector.hasErrors()) {
+    errorCollector.showSummaryNotice();
+  }
+  
+  return results;
 }
 
 /**
  * 将 Markdown 文本中的 tags 提取出来
- * @param {string} markdown
- * @returns {string[]}
  */
 export function markdownTagsToNoteAtomTags(markdown: string, defaultTag: string = 'Obsidian'): { tags: string[] } {
   let tags: string[] = [];
-
-  // 使用 Obsidian 的 getFrontMatterInfo 获取 frontmatter 信息
+  
   const frontMatterInfo = getFrontMatterInfo(markdown);
-
+  
   if (frontMatterInfo.exists) {
     try {
-      // 使用 parseYaml 解析 frontmatter
       const frontmatterObj = parseYaml(frontMatterInfo.frontmatter);
       
       if (frontmatterObj && typeof frontmatterObj === 'object' && frontmatterObj.tags) {
         if (Array.isArray(frontmatterObj.tags)) {
-          // 数组形式的标签
           tags = frontmatterObj.tags.map((tag: any) => String(tag).trim()).filter(Boolean);
         } else if (typeof frontmatterObj.tags === 'string') {
-          // 字符串形式的标签，用逗号分隔
           tags = frontmatterObj.tags.split(',').map((t: string) => t.trim()).filter(Boolean);
         }
       }
     } catch (e) {
-      console.error('解析 frontmatter 中的标签失败:', e);
+      // frontmatter 解析失败不阻止标签提取，使用默认标签
+      console.warn('解析 frontmatter 中的标签失败:', e);
     }
   }
-
-  // 在 tags 中添加 defaultTag
+  
   tags.push(defaultTag);
-  return {
-    tags: tags
-  };
+  return { tags };
 }
 
 /**
  * 根据文件扩展名获取文件类型
- * @param {string} extension - 文件扩展名
- * @returns {number} 文件类型：1-图片 2-音频 3-PDF
  */
 export function getFileType(extension: string): number {
   return {
@@ -275,17 +552,17 @@ export function getFileType(extension: string): number {
     'jpg': 1,
     'jpeg': 1,
     'gif': 1,
+    'webp': 1,
     'wav': 2,
     'mp3': 2,
     'mp4': 2,
+    'm4a': 2,
     'pdf': 3
   }[extension.toLowerCase()] || 1;
 }
 
 /**
  * 根据文件扩展名获取 MIME 类型
- * @param {string} extension - 文件扩展名
- * @returns {string} MIME 类型
  */
 export function getMimeType(extension: string): string {
   const mimeTypes: { [key: string]: string } = {
@@ -293,8 +570,10 @@ export function getMimeType(extension: string): string {
     'jpg': 'image/jpeg',
     'jpeg': 'image/jpeg',
     'gif': 'image/gif',
+    'webp': 'image/webp',
     'mp3': 'audio/mpeg',
-    'wav': 'audio/mpeg',
+    'wav': 'audio/wav',
+    'm4a': 'audio/mp4',
     'mp4': 'audio/mp4',
     'pdf': 'application/pdf',
   };
@@ -303,13 +582,60 @@ export function getMimeType(extension: string): string {
 
 /**
  * 根据文件类型获取文件名
- * @param {number} fileType - 文件类型
- * @returns {string} 文件名
  */
 export function getFileTypeName(fileType: number): string { 
   return {
     1: 'image',
     2: 'audio',
     3: 'pdf'
-  }[fileType] || '未知';
+  }[fileType] || 'unknown';
+}
+
+/**
+ * 检查 API Key 是否有效（健康检查）
+ * 通过调用一个轻量级 API 来验证
+ */
+export async function checkApiKeyHealth(apiKey: string): Promise<{ valid: boolean; error?: MowenError }> {
+  if (!apiKey || apiKey.trim() === '') {
+    return { 
+      valid: false, 
+      error: new MowenError(MowenErrorCode.CONFIG_API_KEY_MISSING) 
+    };
+  }
+  
+  try {
+    // 尝试获取上传授权作为健康检查（轻量级操作）
+    const response = await safeRequest(
+      `${baseUrl}/upload/prepare`,
+      "POST",
+      {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      JSON.stringify({ fileType: 1 }),
+      10000 // 10秒超时
+    );
+    
+    if (response.status === 401) {
+      return { 
+        valid: false, 
+        error: new MowenError(MowenErrorCode.API_UNAUTHORIZED, 'API Key 无效或已过期') 
+      };
+    }
+    
+    if (response.status === 200) {
+      return { valid: true };
+    }
+    
+    // 其他状态码
+    return { 
+      valid: false, 
+      error: classifyApiError(response.status, response.json, undefined) 
+    };
+  } catch (error: any) {
+    return { 
+      valid: false, 
+      error: error instanceof MowenError ? error : classifyNetworkError(error as Error) 
+    };
+  }
 }
