@@ -114,14 +114,14 @@ export async function publishNoteToMowen(params: PublishNoteParams): Promise<Pub
       },
       body: bb,
       timeout: 30000
-    });
+    } as any);
 
     const result = response.json;
 
     //  result.noteId 不等于空时发布成功
     if (response.status === 200 && result.noteId !== "") {
       // 发布成功的情况下，根据 settings 的内容进行笔记的隐私设置
-      if (settings.section === 1) {
+      if (settings && settings.section === 1) {
         // 调用更新 settings path /api/open/api/v1/note/set
         let settingResponse = await requestUrl({
           url: baseUrl + `/note/set`,
@@ -132,13 +132,13 @@ export async function publishNoteToMowen(params: PublishNoteParams): Promise<Pub
           },
           body: JSON.stringify({
             "noteId": result.noteId,
-            "section": settings.section,
+            "section": settings?.section ?? 1,
             "settings": {
-              "privacy": settings.privacy
+              "privacy": settings?.privacy
             }
           }),
           timeout: 30000
-        });
+        } as any);
         const settingResult = settingResponse.json;
       }
       return {
@@ -181,7 +181,7 @@ export async function getUploadAuthorization(apiKey: string, fileType: number): 
         // 根据文档，这里可能需要传入文件类型、文件名等，但目前文档中没有明确要求，先留空
       }),
       timeout: 30000
-    });
+    } as any);
     const result = response.json;
     if (response.status === 200 && result.form) {
       return { success: true, data: result.form };

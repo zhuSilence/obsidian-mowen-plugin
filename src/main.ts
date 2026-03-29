@@ -696,12 +696,12 @@ export default class MowenPlugin extends Plugin {
 						const fileType = getFileType(file.extension);
 						const fileTypeName = getFileTypeName(fileType);
 						const authRes = await getUploadAuthorization(this.settings.apiKey, fileType);
-						if (authRes.success && authRes.data.endpoint) {
-							const uploadRes = await deliverFile(authRes.data.endpoint, authRes.data, fileBlob, fName);
+						if (authRes.success && authRes.data && authRes.data.endpoint) {
+							const uploadRes = await deliverFile(authRes.data.endpoint, authRes.data as Record<string, string>, fileBlob, fName);
 							if (uploadRes.success && uploadRes.data) {
 								let uuidKey = fileType == 2 ? 'audio-uuid' : 'uuid';
 								let attr = {
-									[uuidKey]: uploadRes.data.fileId,
+									[uuidKey]: uploadRes.data.file?.fileId || '',
 									align: 'center',
 									alt: fName
 								};
