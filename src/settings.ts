@@ -80,13 +80,16 @@ export class MowenSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName('API key')
       .setDesc('请输入你的墨问 API key')
-      .addText(text => text
-        .setPlaceholder('Enter your API key')
-        .setValue(this.plugin.settings.apiKey)
-        .onChange(async (value) => {
-          this.plugin.settings.apiKey = value;
-          await this.plugin.saveSettings();
-        }));
+      .addText(text => {
+        text.inputEl.type = 'password';
+        text
+          .setPlaceholder('Enter your API key')
+          .setValue(this.plugin.settings.apiKey)
+          .onChange(async (value) => {
+            this.plugin.settings.apiKey = value;
+            await this.plugin.saveSettings();
+          });
+      });
 
     new Setting(containerEl)
       .setName('笔记ID键名')
@@ -257,13 +260,16 @@ export class MowenSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName('API key')
       .setDesc('请输入所选 AI 服务商的 API key')
-      .addText(text => text
-        .setPlaceholder('在此输入 API key')
-        .setValue(this.plugin.settings.llmSettings.apiKey)
-        .onChange(async (value) => {
-          this.plugin.settings.llmSettings.apiKey = value;
-          await this.plugin.saveSettings();
-        }));
+      .addText(text => {
+        text.inputEl.type = 'password';
+        text
+          .setPlaceholder('在此输入 API key')
+          .setValue(this.plugin.settings.llmSettings.apiKey)
+          .onChange(async (value) => {
+            this.plugin.settings.llmSettings.apiKey = value;
+            await this.plugin.saveSettings();
+          });
+      });
 
     new Setting(containerEl)
       .setName('模型名称')

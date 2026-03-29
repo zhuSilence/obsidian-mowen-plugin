@@ -2,8 +2,9 @@ import { App, Editor, MarkdownView, Notice, Plugin, Setting, Menu, TextComponent
 import { MowenSettingTab, DEFAULT_SETTINGS, MowenPluginSettings } from "./settings";
 import { publishNoteToMowen, markdownTagsToNoteAtomTags, getUploadAuthorization, deliverFile, getFileType, getMimeType, getFileTypeName } from "./api";
 import { generateNoteMetadata } from "./ai"; // 导入AI生成函数
+import { TagService } from "./services/TagService";
 
-// 发布弹窗 Modal
+// 发布弹窗 Modal - UX优化版：局部更新，避免全量重绘
 class MowenPublishModal extends Modal {
 	content: string;
 	title: string;
@@ -16,6 +17,17 @@ class MowenPublishModal extends Modal {
 	noShare: boolean = false;
 	expireAt: number = 0;
 	summary: string | null = null; // 用于存储AI生成的摘要
+
+	// === UX优化：分离容器元素，避免全量重绘 ===
+	private titleInput!: TextComponent;
+	private tagsInput!: TextComponent;
+	private aiButton!: HTMLButtonElement;
+	private aiSettingEl!: HTMLElement;
+	private autoPublishToggleEl!: HTMLElement;
+	private contentPreviewEl!: HTMLElement;
+	private privacySectionContainer!: HTMLElement;
+	private publishButtonEl!: HTMLElement;
+	private errorContainer!: HTMLElement; // 验证错误显示区域
 
 	onSubmit: (title: string, tags: string, autoPublish: boolean, settings: any, summary: string | null) => void;
 
@@ -49,7 +61,9 @@ class MowenPublishModal extends Modal {
 			this.initialLoadDone = true; // 标记为已完成初始加载
 		}
 
-		this.renderSettings(); // 渲染设置
+		this.renderLayout(); // 渲染布局（只执行一次）
+		this.updateContentPreview(); // 更新内容预览
+		this.renderPrivacySection(); // 渲染隐私设置区域
 	}
 
 	// 工具方法：去除 YAML frontmatter
@@ -63,101 +77,164 @@ class MowenPublishModal extends Modal {
 		return content;
 	}
 
-	private renderSettings() {
+	// === UX优化1：布局只渲染一次，后续只局部更新 ===
+	private renderLayout() {
 		const { contentEl } = this;
-		// 清除之前渲染的设置，以便重新渲染
-		contentEl.empty();
-		contentEl.createEl('h2', { text: '发布到墨问' });
 
+		// 错误提示区域（放在最上方）
+		this.errorContainer = contentEl.createDiv({ cls: 'mowen-error-container' });
+		this.errorContainer.style.color = '#e74c3c';
+		this.errorContainer.style.marginBottom = '10px';
+
+		// 标题输入
 		new Setting(contentEl)
 			.setName('标题')
-			.setDesc('发布到墨问后的笔记标题，会自动加粗')
+			.setDesc('发布到墨问后的笔记标题，会自动加粗（必填）')
 			.addText((text) => {
+				this.titleInput = text;
 				text.setValue(this.title).onChange((value) => {
 					this.title = value;
+					this.validateForm();
 				});
+				text.inputEl.addEventListener('blur', () => this.validateForm());
 			});
 
+		// 标签输入
 		new Setting(contentEl)
 			.setName('标签')
-			.setDesc('可选，英文逗号分隔，发布到墨问后的笔记标签，通过默认标签配置可以进行自定义')
+			.setDesc('可选，英文逗号分隔，发布到墨问后的笔记标签')
 			.addText((text) => {
+				this.tagsInput = text;
 				text.setValue(this.tags).onChange((value) => {
 					this.tags = value;
+					this.validateForm();
 				});
 			});
 
-		new Setting(contentEl)
-			.setName('AI 功能')
-			.setDesc('使用AI为当前笔记生成标题和标签')
-			.addButton(button => {
-				button
-					.setButtonText('✨ AI 生成')
-					.setCta()
-					.onClick(async () => {
-						button.setButtonText('正在生成...').setDisabled(true);
-						new Notice('AI 正在生成内容，请稍候...');
+		// AI功能按钮 - 独立容器，方便只更新按钮状态
+		this.aiSettingEl = contentEl.createDiv();
+		this.renderAiButton();
 
-						try {
-							const cleanContent = this.stripFrontmatter(this.content);
-							const result = await generateNoteMetadata(this.plugin.settings, cleanContent);
-
-							if (result) {
-								this.title = result.title;
-								const defaultTags = markdownTagsToNoteAtomTags(this.content, this.plugin.settings.defaultTag).tags;
-								const aiTags = result.tags || [];
-								const combinedTags = [...new Set([...defaultTags, ...aiTags])];
-								this.tags = combinedTags.join(',');
-
-								if (result.summary) {
-									this.summary = result.summary;
-									new Notice('AI 生成成功，摘要已保存！');
-								} else {
-									this.summary = null;
-									new Notice('AI 生成成功！');
-								}
-								this.renderSettings();
-							}
-						} catch (error) {
-							console.error(error);
-							this.renderSettings(); // 即使失败也重绘，恢复按钮
-						}
-					});
-			});
-
+		// 自动发布开关
 		new Setting(contentEl)
 			.setName('自动发布')
 			.setDesc('立即发布到墨问')
 			.addToggle(toggle => {
+				this.autoPublishToggleEl = toggle.toggleEl;
 				toggle.setValue(this.autoPublish).onChange(value => {
 					this.autoPublish = value;
 				});
 			});
 
-		new Setting(contentEl)
-			.setName('内容')
-			.setDesc(
-				(() => {
-					let previewContent = this.stripFrontmatter(this.content);
-					if (this.summary) {
-						previewContent = `> ${this.summary}\n\n${previewContent}`;
-					}
-					return previewContent.length > 100 ? previewContent.slice(0, 100) + '...' : previewContent;
-				})()
-			);
+		// 内容预览 - 独立容器
+		this.contentPreviewEl = contentEl.createDiv();
+		this.updateContentPreview();
 
+		// 隐私设置区域 - 独立容器
 		new Setting(contentEl)
 			.setName('隐私设置')
 			.setDesc('设置笔记隐私')
 			.addToggle(toggle => {
 				toggle.setValue(this.section === 1).onChange(value => {
 					this.section = value ? 1 : 0;
-					this.renderSettings(); // 只重新渲染设置部分
+					this.renderPrivacySection(); // === UX优化3：只局部渲染隐私区域 ===
 				});
 			});
+		this.privacySectionContainer = contentEl.createDiv();
+
+		// 发布按钮 - 独立容器
+		this.publishButtonEl = contentEl.createDiv();
+		this.renderPublishButton();
+
+		// 初始验证
+		this.validateForm();
+	}
+
+	// === UX优化2：AI按钮独立渲染，生成时只更新按钮状态 ===
+	private renderAiButton(isGenerating: boolean = false) {
+		this.aiSettingEl.empty();
+		new Setting(this.aiSettingEl)
+			.setName('AI 功能')
+			.setDesc('使用AI为当前笔记生成标题和标签')
+			.addButton(button => {
+				this.aiButton = button.buttonEl;
+				button
+					.setButtonText(isGenerating ? '正在生成...' : '✨ AI 生成')
+					.setDisabled(isGenerating);
+				// setCta() 不接受参数，根据条件调用
+				if (!isGenerating) {
+					button.setCta();
+				}
+				button.onClick(async () => {
+					await this.handleAiGenerate();
+				});
+			});
+	}
+
+	// AI生成处理 - 只更新必要元素，不刷新整个弹窗
+	private async handleAiGenerate() {
+		// === UX优化：只更新按钮状态，不调用 renderSettings ===
+		this.renderAiButton(true);
+		new Notice('AI 正在生成内容，请稍候...');
+
+		try {
+			const cleanContent = this.stripFrontmatter(this.content);
+			const result = await generateNoteMetadata(this.plugin.settings, cleanContent);
+
+			if (result) {
+				// 只更新输入框值，不重绘整个弹窗
+				this.title = result.title;
+				this.titleInput.setValue(this.title);
+
+				const defaultTags = markdownTagsToNoteAtomTags(this.content, this.plugin.settings.defaultTag).tags;
+				const aiTags = result.tags || [];
+				const combinedTags = [...new Set([...defaultTags, ...aiTags])];
+				this.tags = combinedTags.join(',');
+				this.tagsInput.setValue(this.tags);
+
+				if (result.summary) {
+					this.summary = result.summary;
+					new Notice('AI 生成成功，摘要已保存！');
+				} else {
+					this.summary = null;
+					new Notice('AI 生成成功！');
+				}
+
+				// 只更新内容预览
+				this.updateContentPreview();
+
+				// 验证表单
+				this.validateForm();
+			}
+		} catch (error) {
+			console.error('AI生成失败:', error);
+			new Notice('AI 生成失败，请检查API配置');
+		}
+
+		// 无论成功失败，恢复按钮状态
+		this.renderAiButton(false);
+	}
+
+	// 内容预览局部更新
+	private updateContentPreview() {
+		this.contentPreviewEl.empty();
+		let previewContent = this.stripFrontmatter(this.content);
+		if (this.summary) {
+			previewContent = `> ${this.summary}\n\n${previewContent}`;
+		}
+		const previewText = previewContent.length > 100 ? previewContent.slice(0, 100) + '...' : previewContent;
+		new Setting(this.contentPreviewEl)
+			.setName('内容')
+			.setDesc(previewText);
+	}
+
+	// === UX优化3：隐私设置局部渲染 ===
+	private renderPrivacySection() {
+		this.privacySectionContainer.empty();
 
 		if (this.section === 1) {
-			new Setting(contentEl)
+			// 隐私类型下拉框
+			new Setting(this.privacySectionContainer)
 				.setName('隐私类型')
 				.setDesc('设置笔记的隐私类型')
 				.addDropdown(drop => {
@@ -167,13 +244,27 @@ class MowenPublishModal extends Modal {
 					drop.setValue(this.privacy);
 					drop.onChange(value => {
 						this.privacy = value;
-						this.renderSettings(); // 只重新渲染设置部分
+						this.renderPrivacyRuleSection(); // === 只局部渲染规则部分 ===
 					});
 				});
+
+			// 规则设置容器
+			this.renderPrivacyRuleSection();
+		}
+	}
+
+	// 隐私规则部分局部渲染
+	private renderPrivacyRuleSection() {
+		// 移除旧的规则容器（如果存在）
+		const existingRuleContainer = this.privacySectionContainer.querySelector('.privacy-rule-container');
+		if (existingRuleContainer) {
+			existingRuleContainer.remove();
 		}
 
 		if (this.privacy === 'rule') {
-			new Setting(contentEl)
+			const ruleContainer = this.privacySectionContainer.createDiv({ cls: 'privacy-rule-container' });
+
+			new Setting(ruleContainer)
 				.setName('允许分享')
 				.setDesc('是否允许分享')
 				.addToggle(toggle => {
@@ -182,7 +273,7 @@ class MowenPublishModal extends Modal {
 					});
 				});
 
-			new Setting(contentEl)
+			new Setting(ruleContainer)
 				.setName('公开过期时间')
 				.setDesc('到期后自动变为私有，选择日期和时间')
 				.addText(text => {
@@ -202,32 +293,69 @@ class MowenPublishModal extends Modal {
 					});
 				});
 		}
+	}
 
-		new Setting(contentEl)
+	// 发布按钮渲染
+	private renderPublishButton() {
+		this.publishButtonEl.empty();
+		new Setting(this.publishButtonEl)
 			.addButton((btn) =>
 				btn
 					.setButtonText('发布')
 					.setCta()
 					.onClick(() => {
-						this.onSubmit(
-							this.title,
-							this.tags,
-							this.autoPublish,
-							{
-								section: this.section,
-								privacy: {
-									type: this.privacy,
-									rule: {
-										noShare: this.privacy === 'rule' ? this.noShare : undefined,
-										expireAt: this.privacy === 'rule' ? this.expireAt : undefined
+						if (this.validateForm()) {
+							this.onSubmit(
+								this.title,
+								this.tags,
+								this.autoPublish,
+								{
+									section: this.section,
+									privacy: {
+										type: this.privacy,
+										rule: {
+											noShare: this.privacy === 'rule' ? this.noShare : undefined,
+											expireAt: this.privacy === 'rule' ? this.expireAt : undefined
+										}
 									}
-								}
-							},
-							this.summary // 传递摘要
-						);
-						this.close();
+								},
+								this.summary // 传递摘要
+							);
+							this.close();
+						}
 					})
 			);
+	}
+
+	// === UX优化4：表单验证 ===
+	private validateForm(): boolean {
+		this.errorContainer.empty();
+		const errors: string[] = [];
+
+		// 标题必填验证
+		if (!this.title || this.title.trim().length === 0) {
+			errors.push('❌ 标题为必填项');
+		}
+
+		// 标签格式验证（可选，但如果有内容必须符合格式）
+		if (this.tags && this.tags.trim().length > 0) {
+			// 验证标签是否用英文逗号分隔
+			const tagPattern = /^[\u4e00-\u9fa5a-zA-Z0-9_-]+(,[\u4e00-\u9fa5a-zA-Z0-9_-]+)*$/;
+			const cleanedTags = this.tags.trim();
+			if (!tagPattern.test(cleanedTags) && !cleanedTags.split(',').every(t => t.trim().length > 0)) {
+				errors.push('❌ 标签格式错误：请使用英文逗号分隔，如：技术,AI,笔记');
+			}
+		}
+
+		// 显示错误
+		if (errors.length > 0) {
+			errors.forEach(err => {
+				this.errorContainer.createEl('div', { text: err });
+			});
+			return false;
+		}
+
+		return true;
 	}
 }
 
@@ -249,11 +377,12 @@ export default class MowenPlugin extends Plugin {
 							.onClick(async () => {
 								if (this.settings.globalPublishEnabled) {
 									// 合并全局标签、默认标签和笔记自身标签
-									const globalTags = this.settings.globalPublishConfig.tags ? this.settings.globalPublishConfig.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
-									const defaultTags = this.settings.defaultTag ? this.settings.defaultTag.split(',').map(t => t.trim()).filter(Boolean) : [];
-									const noteTags = markdownTagsToNoteAtomTags(selectedText, this.settings.defaultTag).tags || [];
-									const tagsArr = Array.from(new Set([...defaultTags, ...globalTags, ...noteTags]));
-									const tags = tagsArr.join(',');
+									const tags = TagService.mergeTags(
+										this.settings.globalPublishConfig.tags,
+										this.settings.defaultTag,
+										selectedText,
+										this.settings.defaultTag
+									);
 									const autoPublish = this.settings.globalPublishConfig.autoPublish;
 									const privacy = this.settings.globalPublishConfig.privacy;
 									const section = 1;
@@ -294,11 +423,12 @@ export default class MowenPlugin extends Plugin {
 								const title = await this.getTitleFromFile(file);
 								if (this.settings.globalPublishEnabled) {
 									// 合并全局标签、默认标签和笔记自身标签
-									const globalTags = this.settings.globalPublishConfig.tags ? this.settings.globalPublishConfig.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
-									const defaultTags = this.settings.defaultTag ? this.settings.defaultTag.split(',').map(t => t.trim()).filter(Boolean) : [];
-									const noteTags = markdownTagsToNoteAtomTags(content, this.settings.defaultTag).tags || [];
-									const tagsArr = Array.from(new Set([...defaultTags, ...globalTags, ...noteTags]));
-									const tags = tagsArr.join(',');
+									const tags = TagService.mergeTags(
+										this.settings.globalPublishConfig.tags,
+										this.settings.defaultTag,
+										content,
+										this.settings.defaultTag
+									);
 									const autoPublish = this.settings.globalPublishConfig.autoPublish;
 									const privacy = this.settings.globalPublishConfig.privacy;
 									const section = 1;
@@ -339,11 +469,12 @@ export default class MowenPlugin extends Plugin {
 						this.getTitleFromFile(file).then(title => {
 							if (this.settings.globalPublishEnabled) {
 								// 合并全局标签、默认标签和笔记自身标签
-								const globalTags = this.settings.globalPublishConfig.tags ? this.settings.globalPublishConfig.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
-								const defaultTags = this.settings.defaultTag ? this.settings.defaultTag.split(',').map(t => t.trim()).filter(Boolean) : [];
-								const noteTags = markdownTagsToNoteAtomTags(content, this.settings.defaultTag).tags || [];
-								const tagsArr = Array.from(new Set([...defaultTags, ...globalTags, ...noteTags]));
-								const tags = tagsArr.join(',');
+								const tags = TagService.mergeTags(
+									this.settings.globalPublishConfig.tags,
+									this.settings.defaultTag,
+									content,
+									this.settings.defaultTag
+								);
 								const autoPublish = this.settings.globalPublishConfig.autoPublish;
 								const privacy = this.settings.globalPublishConfig.privacy;
 								const section = 1;
@@ -386,11 +517,12 @@ export default class MowenPlugin extends Plugin {
 						this.getTitleFromFile(file).then(title => {
 							if (this.settings.globalPublishEnabled) {
 								// 合并全局标签、默认标签和笔记自身标签
-								const globalTags = this.settings.globalPublishConfig.tags ? this.settings.globalPublishConfig.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
-								const defaultTags = this.settings.defaultTag ? this.settings.defaultTag.split(',').map(t => t.trim()).filter(Boolean) : [];
-								const noteTags = markdownTagsToNoteAtomTags(content, this.settings.defaultTag).tags || [];
-								const tagsArr = Array.from(new Set([...defaultTags, ...globalTags, ...noteTags]));
-								const tags = tagsArr.join(',');
+								const tags = TagService.mergeTags(
+									this.settings.globalPublishConfig.tags,
+									this.settings.defaultTag,
+									content,
+									this.settings.defaultTag
+								);
 								const autoPublish = this.settings.globalPublishConfig.autoPublish;
 								const privacy = this.settings.globalPublishConfig.privacy;
 								const section = 1;
@@ -564,12 +696,12 @@ export default class MowenPlugin extends Plugin {
 						const fileType = getFileType(file.extension);
 						const fileTypeName = getFileTypeName(fileType);
 						const authRes = await getUploadAuthorization(this.settings.apiKey, fileType);
-						if (authRes.success && authRes.data.endpoint) {
-							const uploadRes = await deliverFile(authRes.data.endpoint, authRes.data, fileBlob, fName);
+						if (authRes.success && authRes.data && authRes.data.endpoint) {
+							const uploadRes = await deliverFile(authRes.data.endpoint, authRes.data as Record<string, string>, fileBlob, fName);
 							if (uploadRes.success && uploadRes.data) {
 								let uuidKey = fileType == 2 ? 'audio-uuid' : 'uuid';
 								let attr = {
-									[uuidKey]: uploadRes.data.fileId,
+									[uuidKey]: uploadRes.data.file?.fileId || '',
 									align: 'center',
 									alt: fName
 								};
