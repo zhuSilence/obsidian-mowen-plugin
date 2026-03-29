@@ -45,7 +45,8 @@ export async function publishNoteToMowen(params: PublishNoteParams): Promise<Pub
         "Content-Type": "application/json",
         "Authorization": `Bearer ${apiKey}`,
       },
-      body: bb
+      body: bb,
+      timeout: 30000
     });
 
     const result = response.json;
@@ -68,7 +69,8 @@ export async function publishNoteToMowen(params: PublishNoteParams): Promise<Pub
             "settings": {
               "privacy": settings.privacy
             }
-          })
+          }),
+          timeout: 30000
         });
         const settingResult = settingResponse.json;
       }
@@ -110,6 +112,7 @@ export async function getUploadAuthorization(apiKey: string, fileType: number): 
         fileType: fileType
         // 根据文档，这里可能需要传入文件类型、文件名等，但目前文档中没有明确要求，先留空
       }),
+      timeout: 30000
     });
     const result = response.json;
     if (response.status === 200 && result.form) {
