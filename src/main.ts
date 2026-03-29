@@ -2,6 +2,7 @@ import { App, Editor, MarkdownView, Notice, Plugin, Setting, Menu, TextComponent
 import { MowenSettingTab, DEFAULT_SETTINGS, MowenPluginSettings } from "./settings";
 import { publishNoteToMowen, markdownTagsToNoteAtomTags, getUploadAuthorization, deliverFile, getFileType, getMimeType, getFileTypeName } from "./api";
 import { generateNoteMetadata } from "./ai"; // 导入AI生成函数
+import { TagService } from "./services/TagService";
 
 // 发布弹窗 Modal
 class MowenPublishModal extends Modal {
@@ -249,11 +250,12 @@ export default class MowenPlugin extends Plugin {
 							.onClick(async () => {
 								if (this.settings.globalPublishEnabled) {
 									// 合并全局标签、默认标签和笔记自身标签
-									const globalTags = this.settings.globalPublishConfig.tags ? this.settings.globalPublishConfig.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
-									const defaultTags = this.settings.defaultTag ? this.settings.defaultTag.split(',').map(t => t.trim()).filter(Boolean) : [];
-									const noteTags = markdownTagsToNoteAtomTags(selectedText, this.settings.defaultTag).tags || [];
-									const tagsArr = Array.from(new Set([...defaultTags, ...globalTags, ...noteTags]));
-									const tags = tagsArr.join(',');
+									const tags = TagService.mergeTags(
+										this.settings.globalPublishConfig.tags,
+										this.settings.defaultTag,
+										selectedText,
+										this.settings.defaultTag
+									);
 									const autoPublish = this.settings.globalPublishConfig.autoPublish;
 									const privacy = this.settings.globalPublishConfig.privacy;
 									const section = 1;
@@ -294,11 +296,12 @@ export default class MowenPlugin extends Plugin {
 								const title = await this.getTitleFromFile(file);
 								if (this.settings.globalPublishEnabled) {
 									// 合并全局标签、默认标签和笔记自身标签
-									const globalTags = this.settings.globalPublishConfig.tags ? this.settings.globalPublishConfig.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
-									const defaultTags = this.settings.defaultTag ? this.settings.defaultTag.split(',').map(t => t.trim()).filter(Boolean) : [];
-									const noteTags = markdownTagsToNoteAtomTags(content, this.settings.defaultTag).tags || [];
-									const tagsArr = Array.from(new Set([...defaultTags, ...globalTags, ...noteTags]));
-									const tags = tagsArr.join(',');
+									const tags = TagService.mergeTags(
+										this.settings.globalPublishConfig.tags,
+										this.settings.defaultTag,
+										content,
+										this.settings.defaultTag
+									);
 									const autoPublish = this.settings.globalPublishConfig.autoPublish;
 									const privacy = this.settings.globalPublishConfig.privacy;
 									const section = 1;
@@ -339,11 +342,12 @@ export default class MowenPlugin extends Plugin {
 						this.getTitleFromFile(file).then(title => {
 							if (this.settings.globalPublishEnabled) {
 								// 合并全局标签、默认标签和笔记自身标签
-								const globalTags = this.settings.globalPublishConfig.tags ? this.settings.globalPublishConfig.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
-								const defaultTags = this.settings.defaultTag ? this.settings.defaultTag.split(',').map(t => t.trim()).filter(Boolean) : [];
-								const noteTags = markdownTagsToNoteAtomTags(content, this.settings.defaultTag).tags || [];
-								const tagsArr = Array.from(new Set([...defaultTags, ...globalTags, ...noteTags]));
-								const tags = tagsArr.join(',');
+								const tags = TagService.mergeTags(
+									this.settings.globalPublishConfig.tags,
+									this.settings.defaultTag,
+									content,
+									this.settings.defaultTag
+								);
 								const autoPublish = this.settings.globalPublishConfig.autoPublish;
 								const privacy = this.settings.globalPublishConfig.privacy;
 								const section = 1;
@@ -386,11 +390,12 @@ export default class MowenPlugin extends Plugin {
 						this.getTitleFromFile(file).then(title => {
 							if (this.settings.globalPublishEnabled) {
 								// 合并全局标签、默认标签和笔记自身标签
-								const globalTags = this.settings.globalPublishConfig.tags ? this.settings.globalPublishConfig.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
-								const defaultTags = this.settings.defaultTag ? this.settings.defaultTag.split(',').map(t => t.trim()).filter(Boolean) : [];
-								const noteTags = markdownTagsToNoteAtomTags(content, this.settings.defaultTag).tags || [];
-								const tagsArr = Array.from(new Set([...defaultTags, ...globalTags, ...noteTags]));
-								const tags = tagsArr.join(',');
+								const tags = TagService.mergeTags(
+									this.settings.globalPublishConfig.tags,
+									this.settings.defaultTag,
+									content,
+									this.settings.defaultTag
+								);
 								const autoPublish = this.settings.globalPublishConfig.autoPublish;
 								const privacy = this.settings.globalPublishConfig.privacy;
 								const section = 1;
