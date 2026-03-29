@@ -1,5 +1,72 @@
 import { getFrontMatterInfo, parseYaml, requestUrl } from 'obsidian';
 
+/**
+ * NoteAtom 文本标记接口
+ * 用于表示文本的格式化标记（加粗、链接等）
+ */
+export interface NoteAtomMark {
+  type: string; // 'bold', 'link' 等
+  attrs?: Record<string, any>; // 例如链接的 href 属性
+}
+
+/**
+ * NoteAtom 节点接口
+ * 用于表示墨问笔记的内容节点结构
+ */
+export interface NoteAtomNode {
+  type: string; // 节点类型：'paragraph', 'text', 'quote', 'note', 'image', 'audio' 等
+  content?: NoteAtomNode[]; // 嵌套子节点
+  text?: string; // 文本内容（仅 text 类型节点）
+  marks?: NoteAtomMark[]; // 文本标记
+  attrs?: Record<string, any>; // 属性，如 uuid, align, alt 等
+}
+
+/**
+ * 发布隐私设置接口
+ */
+export interface PublishPrivacy {
+  type: 'private' | 'public' | 'rule';
+  rule?: {
+    noShare?: boolean;
+    expireAt?: number;
+  };
+}
+
+/**
+ * 发布设置接口
+ */
+export interface PublishSettings {
+  auto_publish?: boolean;
+  tags?: string[];
+  privacy?: PublishPrivacy;
+  section?: number;
+}
+
+/**
+ * 上传授权响应接口
+ */
+export interface UploadAuthResponse {
+  success: boolean;
+  data?: {
+    endpoint: string;
+    [key: string]: string; // 其他表单字段
+  } | null;
+  message?: string;
+}
+
+/**
+ * 文件上传响应接口
+ */
+export interface FileUploadResponse {
+  success: boolean;
+  data?: {
+    file: {
+      fileId: string;
+    };
+  } | null;
+  message?: string;
+}
+
 export interface PublishNoteParams {
   noteId?: string | null;
   apiKey: string;
@@ -7,8 +74,8 @@ export interface PublishNoteParams {
   content: string;
   tags?: string[];
   autoPublish?: boolean;
-  settings?: any;
-  body: any[];
+  settings?: PublishSettings;
+  body: NoteAtomNode[];
 }
 
 export interface PublishNoteResult {
@@ -95,9 +162,10 @@ export async function publishNoteToMowen(params: PublishNoteParams): Promise<Pub
 /**
  * 获取文件上传授权信息
  * @param {string} apiKey - 墨问 API Key
- * @returns {Promise<any>} 上传授权信息
+ * @param {number} fileType - 文件类型：1-图片 2-音频 3-PDF
+ * @returns {Promise<UploadAuthResponse>} 上传授权信息
  */
-export async function getUploadAuthorization(apiKey: string, fileType: number): Promise<any> {
+export async function getUploadAuthorization(apiKey: string, fileType: number): Promise<UploadAuthResponse> {
   try {
     const response = await requestUrl({
       url: `${baseUrl}/upload/prepare`,
@@ -115,7 +183,7 @@ export async function getUploadAuthorization(apiKey: string, fileType: number): 
     if (response.status === 200 && result.form) {
       return { success: true, data: result.form };
     } else {
-      return { success: false, message: result.msg || "获取上传授权失败", data: result };
+      return { success: false, message: result.msg || "获取上传授权失败", data: null };
     }
   } catch (error: any) {
     return { success: false, message: error.message || "网络错误" };
@@ -125,12 +193,12 @@ export async function getUploadAuthorization(apiKey: string, fileType: number): 
 /**
  * 执行文件投递上传
  * @param {string} endpoint - 上传端点
- * @param {any} authInfo - 授权信息
+ * @param {Record<string, string>} authInfo - 授权信息
  * @param {Blob} fileBlob - 文件内容的 Blob
  * @param {string} fileName - 文件名
- * @returns {Promise<any>} 上传结果
+ * @returns {Promise<FileUploadResponse>} 上传结果
  */
-export async function deliverFile(endpoint: string, authInfo: any, fileBlob: Blob, fileName: string): Promise<any> {
+export async function deliverFile(endpoint: string, authInfo: Record<string, string>, fileBlob: Blob, fileName: string): Promise<FileUploadResponse> {
   const formData = new FormData();
   // 根据文档，将授权信息添加到 formData
   for (const key in authInfo) {
@@ -149,7 +217,7 @@ export async function deliverFile(endpoint: string, authInfo: any, fileBlob: Blo
     if (response.ok && result.file) { // 假设成功返回 uuid
       return { success: true, data: result.file };
     } else {
-      return { success: false, message: result.msg || "文件上传失败", data: result };
+      return { success: false, message: result.msg || "文件上传失败", data: null };
     }
   } catch (error: any) {
     return { success: false, message: error.message || "网络错误" };
