@@ -10,11 +10,17 @@ import {
 } from './utils/errorHandler';
 
 /**
+ * NoteAtom 文本标记类型
+ * 支持多种 mark 类型组合
+ */
+export type MarkType = 'bold' | 'link' | 'highlight' | 'italic' | 'strike';
+
+/**
  * NoteAtom 文本标记接口
- * 用于表示文本的格式化标记（加粗、链接等）
+ * 用于表示文本的格式化标记（加粗、链接、高亮等）
  */
 export interface NoteAtomMark {
-  type: string; // 'bold', 'link' 等
+  type: MarkType | string; // 扩展支持更多类型
   attrs?: Record<string, any>; // 例如链接的 href 属性
 }
 
@@ -545,36 +551,49 @@ export function markdownTagsToNoteAtomTags(markdown: string, defaultTag: string 
 
 /**
  * 根据文件扩展名获取文件类型
+ * @param extension - 文件扩展名
+ * @returns 文件类型：1-图片 2-音频 3-PDF
  */
 export function getFileType(extension: string): number {
-  return {
-    'png': 1,
-    'jpg': 1,
-    'jpeg': 1,
-    'gif': 1,
-    'webp': 1,
-    'wav': 2,
-    'mp3': 2,
-    'mp4': 2,
-    'm4a': 2,
+  const typeMap: { [key: string]: number } = {
+    // 图片格式
+    'png': 1, 'jpg': 1, 'jpeg': 1, 'gif': 1,
+    'webp': 1, 'svg': 1, 'bmp': 1, 'ico': 1,
+    // 音频格式
+    'wav': 2, 'mp3': 2, 'mp4': 2, 'm4a': 2,
+    'aac': 2, 'webm': 2, 'ogg': 2, 'flac': 2,
+    // PDF
     'pdf': 3
-  }[extension.toLowerCase()] || 1;
+  };
+  return typeMap[extension.toLowerCase()] || 1; // 默认当作图片处理
 }
 
 /**
  * 根据文件扩展名获取 MIME 类型
+ * @param extension - 文件扩展名
+ * @returns MIME 类型字符串
  */
 export function getMimeType(extension: string): string {
   const mimeTypes: { [key: string]: string } = {
+    // 图片
     'png': 'image/png',
     'jpg': 'image/jpeg',
     'jpeg': 'image/jpeg',
     'gif': 'image/gif',
     'webp': 'image/webp',
+    'svg': 'image/svg+xml',
+    'bmp': 'image/bmp',
+    'ico': 'image/x-icon',
+    // 音频
     'mp3': 'audio/mpeg',
     'wav': 'audio/wav',
     'm4a': 'audio/mp4',
     'mp4': 'audio/mp4',
+    'aac': 'audio/aac',
+    'webm': 'audio/webm',
+    'ogg': 'audio/ogg',
+    'flac': 'audio/flac',
+    // PDF
     'pdf': 'application/pdf',
   };
   return mimeTypes[extension.toLowerCase()] || 'application/octet-stream';

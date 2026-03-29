@@ -745,32 +745,36 @@ export default class MowenPlugin extends Plugin {
 				continue;
 			}
 
-			// 4. 处理普通文本（包括加粗和链接）
+			// 4. 处理普通文本（包括加粗和链接的组合）
 			if (line !== '') {
-				const parts = [];
+				const parts: { type: string; text: string; marks: any[] }[] = [];
 				const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
 				let lastIndex = 0;
 				let match;
 
 				while ((match = linkRegex.exec(line)) !== null) {
-					// 处理链接前的普通文本
+					// 处理链接前的普通文本（无 link baseMarks）
 					if (match.index > lastIndex) {
 						const textBeforeLink = line.slice(lastIndex, match.index);
-						this.processBoldText(textBeforeLink, parts);
+						this.processBoldText(textBeforeLink, parts, []);
 					}
-					// 处理链接
-					parts.push({
-						type: 'text',
-						text: match[1],
-						marks: [{ type: 'link', attrs: { href: match[2] } }]
-					});
+					
+					// 处理链接：链接文本内部也可能有 bold 标记
+					// 例如 **[链接](url)** 或 [**链接**](url)
+					const linkText = match[1];
+					const linkHref = match[2];
+					const linkMark = { type: 'link', attrs: { href: linkHref } };
+					
+					// 使用 processBoldText 处理链接文本，叠加 link mark
+					this.processBoldText(linkText, parts, [linkMark]);
+					
 					lastIndex = match.index + match[0].length;
 				}
 
-				// 处理链接后的剩余文本
+				// 处理链接后的剩余文本（无 link baseMarks）
 				if (lastIndex < line.length) {
 					const remainingText = line.slice(lastIndex);
-					this.processBoldText(remainingText, parts);
+					this.processBoldText(remainingText, parts, []);
 				}
 
 				if (parts.length > 0) {
@@ -786,31 +790,83 @@ export default class MowenPlugin extends Plugin {
 		return { content: content };
 	}
 
-	// 辅助函数：处理加粗文本，被 markdownToNoteAtom 调用
-	processBoldText(textSegment: string, partsArray: any[]) {
+	/**
+	 * 辅助函数：处理文本格式化标记，支持 marks 数组叠加
+	 * @param textSegment - 文本片段
+	 * @param partsArray - 输出的 NoteAtom parts 数组
+	 * @param baseMarks - 基础 marks 数组（如 link），用于叠加 bold/highlight
+	 * 
+	 * 支持场景：
+	 * - **普通加粗** → marks: [{ type: 'bold' }]
+	 * - ==高亮文本== → marks: [{ type: 'highlight' }]
+	 * - **==加粗高亮==** → marks: [{ type: 'bold' }, { type: 'highlight' }]
+	 * - **[链接](url)** → marks: [{ type: 'bold' }, { type: 'link', attrs: { href: 'url' } }]
+	 */
+	processBoldText(textSegment: string, partsArray: any[], baseMarks: any[] = []) {
 		let currentText = '';
-		let inBold = false;
-		for (let j = 0; j < textSegment.length; j++) {
-			if (textSegment[j] === '*' && textSegment[j + 1] === '*') {
+		// 当前激活的 marks，从 baseMarks 开始叠加
+		let activeMarks: any[] = [...baseMarks];
+		
+		let i = 0;
+		while (i < textSegment.length) {
+			// 检测 highlight 标记 (==text==)
+			if (textSegment[i] === '=' && textSegment[i + 1] === '=') {
+				// 先推送已累积的文本
 				if (currentText) {
 					partsArray.push({
 						type: 'text',
 						text: currentText,
-						marks: inBold ? [{ type: 'bold' }] : []
+						marks: activeMarks.length > 0 ? [...activeMarks] : [...baseMarks]
 					});
 					currentText = '';
 				}
-				inBold = !inBold;
-				j++; // 跳过下一个 *
-			} else {
-				currentText += textSegment[j];
+				
+				// 切换 highlight 状态
+				const highlightIndex = activeMarks.findIndex(m => m.type === 'highlight');
+				if (highlightIndex !== -1) {
+					activeMarks.splice(highlightIndex, 1);
+				} else {
+					activeMarks.push({ type: 'highlight' });
+				}
+				
+				i += 2; // 跳过 ==
+				continue;
 			}
+			
+			// 检测 bold 标记 (**)
+			if (textSegment[i] === '*' && textSegment[i + 1] === '*') {
+				// 先推送已累积的文本
+				if (currentText) {
+					partsArray.push({
+						type: 'text',
+						text: currentText,
+						marks: activeMarks.length > 0 ? [...activeMarks] : [...baseMarks]
+					});
+					currentText = '';
+				}
+				
+				// 切换 bold 状态
+				const boldIndex = activeMarks.findIndex(m => m.type === 'bold');
+				if (boldIndex !== -1) {
+					activeMarks.splice(boldIndex, 1);
+				} else {
+					activeMarks.push({ type: 'bold' });
+				}
+				
+				i += 2; // 跳过 **
+				continue;
+			}
+			
+			currentText += textSegment[i];
+			i++;
 		}
+		
+		// 处理末尾剩余文本
 		if (currentText) {
 			partsArray.push({
 				type: 'text',
 				text: currentText,
-				marks: inBold ? [{ type: 'bold' }] : []
+				marks: activeMarks.length > 0 ? [...activeMarks] : [...baseMarks]
 			});
 		}
 	}
