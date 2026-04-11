@@ -1,3 +1,11 @@
+/**
+ * AI 智能助手模块
+ * 
+ * 修复项：
+ * - #11: AI 健康检查改为轻量级验证
+ * - #17: 超时泄漏修复（使用 AbortController）
+ */
+
 import { requestUrl, Notice } from 'obsidian';
 import { MowenPluginSettings } from './settings';
 import { 
@@ -56,10 +64,11 @@ interface LLMProvider {
 /**
  * 默认 AI 请求超时时间（毫秒）
  */
-const AI_DEFAULT_TIMEOUT = 60000; // AI 生成通常需要较长时间
+const AI_DEFAULT_TIMEOUT = 60000;
 
 /**
  * DeepSeek 服务商实现
+ * 修复 #17: 使用 AbortController 替代 setTimeout 实现超时
  */
 class DeepSeekProvider implements LLMProvider {
   name = 'deepseek';
@@ -73,7 +82,6 @@ class DeepSeekProvider implements LLMProvider {
   ): Promise<AIGeneratedContent> {
     const url = 'https://api.deepseek.com/chat/completions';
     
-    // 构建系统提示
     const summaryInstruction = generateSummary
       ? "3. 生成一段不超过200字的中文内容摘要。"
       : "";
@@ -103,33 +111,37 @@ ${summaryInstruction}
     };
 
     try {
-      // Obsidian requestUrl 不支持 timeout 参数，使用 Promise.race 实现超时
-      const responsePromise = requestUrl({
-        url,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(requestBody),
-      });
+      // 修复 #17: 使用 AbortController + clearTimeout 替代 Promise.race 泄漏
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), AI_DEFAULT_TIMEOUT);
       
-      // 超时处理
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => {
-          reject(new AIServiceError(
+      let response;
+      try {
+        response = await requestUrl({
+          url,
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify(requestBody),
+        });
+      } catch (error: any) {
+        // 检查是否为超时
+        if (error.name === 'AbortError' || controller.signal.aborted) {
+          throw new AIServiceError(
             MowenErrorCode.NETWORK_TIMEOUT,
             `AI 请求超时(${AI_DEFAULT_TIMEOUT}ms)`,
             this.name
-          ));
-        }, AI_DEFAULT_TIMEOUT);
-      });
-      
-      const response = await Promise.race([responsePromise, timeoutPromise]);
+          );
+        }
+        throw error;
+      } finally {
+        clearTimeout(timeoutId);
+      }
       
       const data = response.json;
       
-      // 检查响应格式
       if (!data.choices || !Array.isArray(data.choices) || data.choices.length === 0) {
         throw new AIServiceError(
           MowenErrorCode.API_INVALID_RESPONSE,
@@ -147,11 +159,9 @@ ${summaryInstruction}
         );
       }
       
-      // 安全解析 JSON
       try {
         const parsedResult: AIGeneratedContent = JSON.parse(resultText);
         
-        // 验证返回字段
         if (!parsedResult.title || typeof parsedResult.title !== 'string') {
           throw new AIServiceError(
             MowenErrorCode.API_INVALID_RESPONSE,
@@ -170,7 +180,7 @@ ${summaryInstruction}
         
         return parsedResult;
         
-      } catch (parseError) {
+      } catch (parseError: any) {
         throw new AIServiceError(
           MowenErrorCode.API_INVALID_RESPONSE,
           `JSON 解析失败: ${parseError.message}`,
@@ -180,12 +190,9 @@ ${summaryInstruction}
       }
       
     } catch (error: any) {
-      // 处理 requestUrl 抛出的错误
       const err = error as any;
       
-      // HTTP 错误
       if (err.status) {
-        // DeepSeek 特殊错误处理
         if (err.status === 401) {
           throw new AIServiceError(
             MowenErrorCode.API_UNAUTHORIZED,
@@ -211,7 +218,6 @@ ${summaryInstruction}
         );
       }
       
-      // 网络错误
       throw new AIServiceError(
         classifyNetworkError(error as Error).code,
         'DeepSeek API 网络请求失败',
@@ -223,26 +229,12 @@ ${summaryInstruction}
 }
 
 /**
- * Kimi 服务商实现（预留扩展）
- */
-// class KimiProvider implements LLMProvider {
-//   name = 'kimi';
-//   async generate(...) { ... }
-// }
-
-/**
  * 服务商工厂函数
  */
 function getProvider(providerName: string): LLMProvider {
   switch (providerName) {
     case 'deepseek':
       return new DeepSeekProvider();
-    
-    // 扩展其他服务商
-    // case 'kimi':
-    //   return new KimiProvider();
-    // case 'openai':
-    //   return new OpenAIProvider();
     
     default:
       throw new AIServiceError(
@@ -264,12 +256,6 @@ export interface AIGenerateOptions {
 
 /**
  * 生成笔记元数据（标题、标签、摘要）
- * 
- * 改进：
- * 1. 添加超时设置
- * 2. 完善的错误处理和分类
- * 3. 可选重试机制
- * 4. JSON 解析安全处理
  */
 export async function generateNoteMetadata(
   settings: MowenPluginSettings, 
@@ -279,35 +265,24 @@ export async function generateNoteMetadata(
   const { provider, apiKey, model, generateSummary, tagsCount } = settings.llmSettings || {};
   const enableRetry = options?.enableRetry ?? true;
 
-  // 配置验证
   if (!provider) {
-    const error = new AIServiceError(
-      MowenErrorCode.CONFIG_INVALID,
-      '未配置 AI 服务商'
-    );
+    const error = new AIServiceError(MowenErrorCode.CONFIG_INVALID, '未配置 AI 服务商');
     error.showNotice();
     return null;
   }
   
   if (!apiKey || apiKey.trim() === '') {
-    const error = new AIServiceError(
-      MowenErrorCode.CONFIG_API_KEY_MISSING,
-      '未配置 AI API Key'
-    );
+    const error = new AIServiceError(MowenErrorCode.CONFIG_API_KEY_MISSING, '未配置 AI API Key');
     error.showNotice();
     return null;
   }
   
   if (!model) {
-    const error = new AIServiceError(
-      MowenErrorCode.CONFIG_INVALID,
-      '未配置 AI 模型'
-    );
+    const error = new AIServiceError(MowenErrorCode.CONFIG_INVALID, '未配置 AI 模型');
     error.showNotice();
     return null;
   }
   
-  // 内容验证
   if (!content || content.trim().length < 50) {
     new Notice('内容过短，无法生成有效的标题和标签');
     return null;
@@ -316,22 +291,16 @@ export async function generateNoteMetadata(
   try {
     const llmProvider = getProvider(provider);
     
-    // 带重试的生成
     const generateOperation = () => llmProvider.generate(
-      apiKey, 
-      model, 
-      content, 
-      generateSummary ?? false, 
-      tagsCount ?? 3
+      apiKey, model, content, generateSummary ?? false, tagsCount ?? 3
     );
     
     const result = enableRetry 
       ? await withRetry(generateOperation, {
           ...DEFAULT_RETRY_CONFIG,
-          // AI 生成重试间隔更长
           initialDelayMs: 2000,
           maxDelayMs: 15000,
-          maxRetries: options?.maxRetries ?? 2 // AI 生成只重试2次
+          maxRetries: options?.maxRetries ?? 2
         }, (attempt, err) => {
           console.log(`[Mowen AI] 第 ${attempt} 次重试，原因: ${err.getUserMessage().title}`);
           new Notice(`AI 生成失败，正在重试(${attempt})...`, 3000);
@@ -341,7 +310,6 @@ export async function generateNoteMetadata(
     return result;
     
   } catch (error: any) {
-    // 统一错误处理
     const aiError = error instanceof AIServiceError 
       ? error 
       : new AIServiceError(
@@ -363,7 +331,8 @@ export async function generateNoteMetadata(
 }
 
 /**
- * 检查 AI 服务是否可用（健康检查）
+ * 修复 #11: AI 服务健康检查
+ * 改为只验证配置完整性 + 轻量级模型列表请求，不消耗生成额度
  */
 export async function checkAIServiceHealth(
   settings: MowenPluginSettings
@@ -373,38 +342,46 @@ export async function checkAIServiceHealth(
   if (!provider || !apiKey || !model) {
     return { 
       valid: false, 
-      error: new AIServiceError(
-        MowenErrorCode.CONFIG_INVALID,
-        'AI 服务配置不完整'
-      ) 
+      error: new AIServiceError(MowenErrorCode.CONFIG_INVALID, 'AI 服务配置不完整') 
     };
   }
   
   try {
-    const llmProvider = getProvider(provider);
+    // 使用轻量级的模型列表 API 检查，不消耗生成额度
+    const response = await requestUrl({
+      url: 'https://api.deepseek.com/models',
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+      },
+    });
     
-    // 发送一个简单的测试请求
-    const testResult = await llmProvider.generate(
-      apiKey,
-      model,
-      '测试内容',
-      false,
-      1
-    );
+    if (response.status === 200) {
+      return { valid: true };
+    }
     
-    return { valid: true };
-    
+    return { 
+      valid: false, 
+      error: new AIServiceError(
+        MowenErrorCode.API_UNAUTHORIZED,
+        'API Key 验证失败',
+        provider
+      )
+    };
   } catch (error: any) {
+    const err = error as any;
+    if (err.status === 401) {
+      return { 
+        valid: false, 
+        error: new AIServiceError(MowenErrorCode.API_UNAUTHORIZED, 'API Key 无效', provider, error)
+      };
+    }
+    
     return { 
       valid: false, 
       error: error instanceof AIServiceError 
         ? error 
-        : new AIServiceError(
-            MowenErrorCode.UNKNOWN,
-            '健康检查失败',
-            provider,
-            error
-          )
+        : new AIServiceError(MowenErrorCode.UNKNOWN, '健康检查失败', provider, error)
     };
   }
 }

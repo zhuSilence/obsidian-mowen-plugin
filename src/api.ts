@@ -20,8 +20,8 @@ export type MarkType = 'bold' | 'link' | 'highlight' | 'italic' | 'strike';
  * 用于表示文本的格式化标记（加粗、链接、高亮等）
  */
 export interface NoteAtomMark {
-  type: MarkType | string; // 扩展支持更多类型
-  attrs?: Record<string, any>; // 例如链接的 href 属性
+  type: MarkType; // 移除 | string，严格类型约束
+  attrs?: Record<string, unknown>; // 移除 any，使用 unknown
 }
 
 /**
@@ -33,7 +33,7 @@ export interface NoteAtomNode {
   content?: NoteAtomNode[]; // 嵌套子节点
   text?: string; // 文本内容（仅 text 类型节点）
   marks?: NoteAtomMark[]; // 文本标记
-  attrs?: Record<string, any>; // 属性，如 uuid, align, alt 等
+  attrs?: Record<string, unknown>; // 属性，如 uuid, align, alt 等
 }
 
 /**
@@ -67,7 +67,7 @@ export interface UploadAuthResponse {
     [key: string]: string; // 其他表单字段
   } | null;
   message?: string;
-  error?: MowenError; // 新增：结构化错误对象
+  error?: MowenError; // 结构化错误对象
 }
 
 /**
@@ -81,7 +81,7 @@ export interface FileUploadResponse {
     };
   } | null;
   message?: string;
-  error?: MowenError; // 新增：结构化错误对象
+  error?: MowenError; // 结构化错误对象
 }
 
 export interface PublishNoteParams {
@@ -99,8 +99,8 @@ export interface PublishNoteParams {
 export interface PublishNoteResult {
   success: boolean;
   message: string;
-  data?: any;
-  error?: MowenError; // 新增：结构化错误对象
+  data?: unknown;
+  error?: MowenError; // 结构化错误对象
 }
 
 /** API 基础地址 */
@@ -472,25 +472,22 @@ export async function deliverFile(
 }
 
 /**
- * 批量文件上传（带错误聚合）
- * 用于处理包含多个图片/文件的笔记
+ * 批量文件上传（带错误聚合，并发上传）
+ * 修复 #16: 使用 Promise.allSettled 并发上传
  */
 export async function batchUploadFiles(
   apiKey: string,
   files: Array<{ blob: Blob; name: string; fileType: number }>
 ): Promise<Array<{ success: boolean; fileId?: string; error?: MowenError }>> {
-  const results: Array<{ success: boolean; fileId?: string; error?: MowenError }> = [];
   const errorCollector = new BatchErrorCollector();
   
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
-    
+  // 并发上传所有文件
+  const uploadPromises = files.map(async (file, i) => {
     // 获取上传授权
     const authRes = await getUploadAuthorization(apiKey, file.fileType);
     if (!authRes.success || !authRes.data) {
       errorCollector.add(i, authRes.error!, file.name);
-      results.push({ success: false, error: authRes.error! });
-      continue;
+      return { success: false, error: authRes.error! };
     }
     
     // 执行上传
@@ -502,22 +499,35 @@ export async function batchUploadFiles(
     );
     
     if (uploadRes.success && uploadRes.data) {
-      results.push({ 
+      return { 
         success: true, 
         fileId: uploadRes.data.file?.fileId 
-      });
+      };
     } else {
       errorCollector.add(i, uploadRes.error!, file.name);
-      results.push({ success: false, error: uploadRes.error! });
+      return { success: false, error: uploadRes.error! };
     }
-  }
+  });
+  
+  const results = await Promise.allSettled(uploadPromises);
+  
+  // 处理结果
+  const finalResults = results.map((result, i) => {
+    if (result.status === 'fulfilled') {
+      return result.value;
+    } else {
+      const error = classifyNetworkError(result.reason as Error);
+      errorCollector.add(i, error, files[i].name);
+      return { success: false, error };
+    }
+  });
   
   // 显示汇总提示
   if (errorCollector.hasErrors()) {
     errorCollector.showSummaryNotice();
   }
   
-  return results;
+  return finalResults;
 }
 
 /**
@@ -534,7 +544,7 @@ export function markdownTagsToNoteAtomTags(markdown: string, defaultTag: string 
       
       if (frontmatterObj && typeof frontmatterObj === 'object' && frontmatterObj.tags) {
         if (Array.isArray(frontmatterObj.tags)) {
-          tags = frontmatterObj.tags.map((tag: any) => String(tag).trim()).filter(Boolean);
+          tags = frontmatterObj.tags.map((tag: unknown) => String(tag).trim()).filter(Boolean);
         } else if (typeof frontmatterObj.tags === 'string') {
           tags = frontmatterObj.tags.split(',').map((t: string) => t.trim()).filter(Boolean);
         }
