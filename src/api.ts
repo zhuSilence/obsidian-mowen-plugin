@@ -40,7 +40,7 @@ export interface NoteAtomNode {
  * 发布隐私设置接口
  */
 export interface PublishPrivacy {
-  type: 'private' | 'public' | 'rule';
+  type:  'public' | 'private' | 'rule';
   rule?: {
     noShare?: boolean;
     expireAt?: number;
@@ -302,7 +302,8 @@ async function updateNotePrivacy(
   const privacyPayload: Record<string, unknown> = {
     type: privacy.type,
   };
-  if (privacy.rule) {
+  // 仅当 type 为 'rule' 时才发送 rule 字段，避免 API 误解 expireAt: '0' 导致隐私不生效
+  if (privacy.type === 'rule' && privacy.rule) {
     privacyPayload.rule = {
       noShare: privacy.rule.noShare ?? false,
       // 官方文档 expireAt 类型为 string（时间戳秒的字符串形式）
