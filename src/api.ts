@@ -13,7 +13,7 @@ import {
  * NoteAtom 文本标记类型
  * 支持多种 mark 类型组合
  */
-export type MarkType = 'bold' | 'link' | 'highlight' | 'italic' | 'strike';
+export type MarkType = 'bold' | 'link' | 'highlight'; // 墨问 NoteAtom 只支持 bold/highlight/link 三种 marks
 
 /**
  * NoteAtom 文本标记接口
@@ -72,28 +72,35 @@ export interface UploadAuthResponse {
 
 /**
  * 文件上传响应接口
+ * 实际 API 返回字段：uid, fileId, name, path, type, format, extra, size, mime, hash, url, scale, risky
  */
 export interface FileUploadResponse {
   success: boolean;
   data?: {
     file: {
-      fileId: string;
+      uid?: string;
+      fileId: string;  // 实际 API 返回的文件ID字段名为 fileId
+      name?: string;
+      path?: string;
+      type?: number;
+      format?: string;
+      size?: string;
+      mime?: string;
+      url?: string;
     };
   } | null;
   message?: string;
-  error?: MowenError; // 结构化错误对象
+  error?: MowenError;
 }
 
 export interface PublishNoteParams {
   noteId?: string | null;
   apiKey: string;
-  title: string;
-  content: string;
   tags?: string[];
   autoPublish?: boolean;
   settings?: PublishSettings;
   body: NoteAtomNode[];
-  enableRetry?: boolean; // 新增：是否启用重试
+  enableRetry?: boolean;
 }
 
 export interface PublishNoteResult {
@@ -152,19 +159,16 @@ async function safeRequest(
 
 /**
  * 发布/更新笔记到墨问
- * 
- * 改进：
- * 1. 添加重试机制（可选）
- * 2. 完善的 HTTP 状态码处理
- * 3. 二次 API 调用（设置隐私）的错误处理
- * 4. 结构化错误返回
+ *
+ * 修复：按官方文档区分创建和编辑的请求体结构
+ * - 创建 POST /note/create: { body, settings: { autoPublish, tags } }
+ * - 编辑 POST /note/edit:   { noteId, body }
+ * - 隐私设置走独立的 POST /note/set 接口
  */
 export async function publishNoteToMowen(params: PublishNoteParams): Promise<PublishNoteResult> {
   const { 
     noteId, 
     apiKey, 
-    title, 
-    content, 
     tags, 
     autoPublish, 
     settings, 
@@ -182,21 +186,33 @@ export async function publishNoteToMowen(params: PublishNoteParams): Promise<Pub
     };
   }
   
-  // 确定 API 路径
-  const url = noteId 
+  const isEdit = !!noteId;
+  const url = isEdit 
     ? `${baseUrl}/note/edit` 
     : `${baseUrl}/note/create`;
   
-  // 构建请求体
-  const requestBody = JSON.stringify({
-    noteId,
-    body: {
-      type: "doc",
-      content: body,
-    },
-    settings
-  });
-  
+  // 按官方文档构建不同的请求体
+  const requestBody = isEdit
+    ? JSON.stringify({
+        // 编辑接口：只需要 noteId + body
+        noteId,
+        body: {
+          type: "doc",
+          content: body,
+        },
+      })
+    : JSON.stringify({
+        // 创建接口：body + settings（只有 autoPublish 和 tags）
+        body: {
+          type: "doc",
+          content: body,
+        },
+        settings: {
+          autoPublish: autoPublish ?? false,
+          tags: tags ?? [],
+        }
+      });
+
   // 主请求操作
   const mainOperation = async () => {
     const response = await safeRequest(
@@ -235,15 +251,15 @@ export async function publishNoteToMowen(params: PublishNoteParams): Promise<Pub
         })
       : await mainOperation();
     
-    // === 二次 API 调用：设置隐私 ===
-    // 只有需要设置隐私时才执行
-    if (settings && settings.section === 1 && settings.privacy) {
+    // === 二次 API 调用：设置隐私（独立接口） ===
+    // 官方文档：隐私设置走 /note/set，不在创建/编辑接口中
+    // 默认创建的笔记是 public，只有非 public 时才需要调用 /note/set
+    if (settings && settings.section === 1 && settings.privacy && settings.privacy.type !== 'public') {
       try {
         await updateNotePrivacy(result.noteId, apiKey, settings);
       } catch (privacyError) {
         // 隐私设置失败不应影响整体发布结果，但需记录警告
         console.warn('[Mowen] 隐私设置更新失败:', privacyError);
-        // 显示 Notice 提示用户
         if (privacyError instanceof MowenError) {
           new Notice(`笔记已发布，但隐私设置更新失败: ${privacyError.getUserMessage().title}`, 5000);
         } else {
@@ -280,6 +296,20 @@ async function updateNotePrivacy(
   apiKey: string, 
   settings: PublishSettings
 ): Promise<void> {
+  // 按官方文档构建 /note/set 请求体
+  const privacy = settings.privacy;
+  if (!privacy) return;
+  const privacyPayload: Record<string, unknown> = {
+    type: privacy.type,
+  };
+  if (privacy.rule) {
+    privacyPayload.rule = {
+      noShare: privacy.rule.noShare ?? false,
+      // 官方文档 expireAt 类型为 string（时间戳秒的字符串形式）
+      expireAt: String(privacy.rule.expireAt ?? 0),
+    };
+  }
+
   const response = await safeRequest(
     `${baseUrl}/note/set`,
     "POST",
@@ -289,9 +319,9 @@ async function updateNotePrivacy(
     },
     JSON.stringify({
       noteId,
-      section: settings?.section ?? 1,
+      section: 1,
       settings: {
-        privacy: settings?.privacy
+        privacy: privacyPayload
       }
     })
   );
@@ -312,10 +342,11 @@ async function updateNotePrivacy(
 export async function getUploadAuthorization(
   apiKey: string, 
   fileType: number,
-  options?: { timeout?: number; enableRetry?: boolean }
+  options?: { timeout?: number; enableRetry?: boolean; fileName?: string }
 ): Promise<UploadAuthResponse> {
   const timeout = options?.timeout ?? DEFAULT_TIMEOUT;
   const enableRetry = options?.enableRetry ?? true;
+  const fileName = options?.fileName;
   
   // 验证 API Key
   if (!apiKey || apiKey.trim() === '') {
@@ -334,7 +365,7 @@ export async function getUploadAuthorization(
         "Content-Type": "application/json",
         "Authorization": `Bearer ${apiKey}`,
       },
-      JSON.stringify({ fileType }),
+      JSON.stringify({ fileType, ...(fileName ? { fileName } : {}) }),
       timeout
     );
     
@@ -398,6 +429,8 @@ export async function deliverFile(
     for (const key in authInfo) {
       formData.append(key, authInfo[key]);
     }
+    // 修复 #15: 文件投递必须带 x:file_name，否则 PDF 等文件名缺失
+    formData.append('x:file_name', fileName);
     formData.append('file', fileBlob, fileName);
     
     // 使用 AbortController 实现超时
@@ -429,7 +462,7 @@ export async function deliverFile(
       
       return { 
         success: true, 
-        data: result.file 
+        data: { file: result.file }
       };
       
     } catch (error: any) {
@@ -484,7 +517,7 @@ export async function batchUploadFiles(
   // 并发上传所有文件
   const uploadPromises = files.map(async (file, i) => {
     // 获取上传授权
-    const authRes = await getUploadAuthorization(apiKey, file.fileType);
+    const authRes = await getUploadAuthorization(apiKey, file.fileType, { fileName: file.name });
     if (!authRes.success || !authRes.data) {
       errorCollector.add(i, authRes.error!, file.name);
       return { success: false, error: authRes.error! };
@@ -501,7 +534,7 @@ export async function batchUploadFiles(
     if (uploadRes.success && uploadRes.data) {
       return { 
         success: true, 
-        fileId: uploadRes.data.file?.fileId 
+        fileId: uploadRes.data.file?.fileId || ''
       };
     } else {
       errorCollector.add(i, uploadRes.error!, file.name);

@@ -18,7 +18,8 @@ export enum MowenErrorCode {
   API_UNAUTHORIZED = 'API_UNAUTHORIZED',        // 401 - API Key 无效
   API_FORBIDDEN = 'API_FORBIDDEN',              // 403 - 权限不足
   API_NOT_FOUND = 'API_NOT_FOUND',              // 404 - 资源不存在
-  API_RATE_LIMIT = 'API_RATE_LIMIT',            // 429 - 请求频率限制
+  API_RATE_LIMIT = 'API_RATE_LIMIT',            // 429 - 请求频率限制（限频）
+  API_QUOTA_EXCEEDED = 'API_QUOTA_EXCEEDED',  // 403 - 配额不足（Quota）
   API_SERVER_ERROR = 'API_SERVER_ERROR',        // 500-599 - 服务器错误
   API_INVALID_RESPONSE = 'API_INVALID_RESPONSE', // 返回数据格式错误
   API_BUSINESS_ERROR = 'API_BUSINESS_ERROR',    // 业务逻辑错误（如发布失败）
@@ -72,8 +73,13 @@ const ERROR_MESSAGES: Record<MowenErrorCode, { title: string; detail: string; ac
   },
   [MowenErrorCode.API_RATE_LIMIT]: {
     title: '请求过于频繁',
-    detail: '您的请求次数已达到限制',
-    action: '请等待几分钟后再试'
+    detail: '您的请求速度过快，触发了限频',
+    action: '请等待几秒钟后再试'
+  },
+  [MowenErrorCode.API_QUOTA_EXCEEDED]: {
+    title: '配额已用完',
+    detail: '今日 API 调用次数已达上限',
+    action: '请明天再试，或联系客服提升配额'
   },
   [MowenErrorCode.API_SERVER_ERROR]: {
     title: '服务器错误',
@@ -172,13 +178,20 @@ export function classifyApiError(status: number, responseBody: any, originalErro
     return new MowenError(MowenErrorCode.API_UNAUTHORIZED, responseBody?.msg || '认证失败', originalError, status);
   }
   if (status === 403) {
-    return new MowenError(MowenErrorCode.API_FORBIDDEN, responseBody?.msg || '无权限', originalError, status);
+    // 墨问官方文档：403 可能是 PERM/RISKY/BLOCKED/Quota
+    // 根据 reason 字段区分
+    const reason = responseBody?.reason || '';
+    if (reason === 'Quota') {
+      return new MowenError(MowenErrorCode.API_QUOTA_EXCEEDED, responseBody?.message || '配额不足', originalError, status);
+    }
+    return new MowenError(MowenErrorCode.API_FORBIDDEN, responseBody?.msg || responseBody?.message || '无权限', originalError, status);
   }
   if (status === 404) {
     return new MowenError(MowenErrorCode.API_NOT_FOUND, responseBody?.msg || '资源不存在', originalError, status);
   }
   if (status === 429) {
-    return new MowenError(MowenErrorCode.API_RATE_LIMIT, responseBody?.msg || '请求频率限制', originalError, status);
+    // 墨问官方文档：429 对应 RATELIMIT reason
+    return new MowenError(MowenErrorCode.API_RATE_LIMIT, responseBody?.message || '请求频率限制', originalError, status);
   }
   if (status >= 500 && status < 600) {
     return new MowenError(MowenErrorCode.API_SERVER_ERROR, responseBody?.msg || `服务器错误(${status})`, originalError, status);
@@ -234,6 +247,7 @@ export const DEFAULT_RETRY_CONFIG: RetryConfig = {
   initialDelayMs: 1000,
   maxDelayMs: 10000,
   backoffMultiplier: 2,
+  // 重试配置 - API_QUOTA_EXCEEDED 不可重试
   retryableErrors: [
     MowenErrorCode.NETWORK_TIMEOUT,
     MowenErrorCode.NETWORK_CONNECTION_FAILED,

@@ -226,25 +226,17 @@ export default class MowenPlugin extends Plugin {
 		// 使用 MarkdownConverter 转换内容
 		const noteBody = await this.markdownConverter.convert(title, content, summary);
 
-		// 修复 #13: 创建 settings 副本，不污染原始对象
-		const publishSettings = {
-			auto_publish: autoPublish,
-			tags: tagArr,
-			privacy: {
-				type: settings.privacy.type,
-				rule: settings.privacy.rule
-			},
-			section: settings.section
-		};
-
+		// 按官方文档构建发布参数
+		// 创建接口只需要 autoPublish + tags，隐私设置走独立的 /note/set
 		const res = await publishNoteToMowen({
 			noteId,
 			apiKey,
-			title,
-			content: '',
 			tags: tagArr,
 			autoPublish,
-			settings: publishSettings,
+			settings: {
+				section: settings.section,
+				privacy: settings.privacy
+			},
 			body: noteBody.content
 		});
 

@@ -4,9 +4,9 @@
  * 
  * 修复项：
  * - #5: 引用块解析 Bug（非引用行不再被误归入引用）
- * - #8: 代码块使用 code_block 类型
+ * - #8: 代码块使用 codeblock 类型
  * - #9: 支持 ![](url) 标准图片语法
- * - #10: 支持 *斜体* 格式
+ * - #10: 支持 *斜体* 格式（转为 highlight 因为墨问不支持 italic marks）
  */
 
 import { App, TFile, getFrontMatterInfo, Notice } from 'obsidian';
@@ -71,10 +71,10 @@ export class MarkdownConverter {
 			content.push({ type: 'paragraph' });
 		}
 
-		// === 第一遍：收集所有图片链接，并行上传 ===
-		const imageUploadMap = await this.preUploadImages(lines);
+		// === 图片上传缓存（避免同一图片重复上传） ===
+		const uploadCache = new Map<string, { success: boolean; uuid?: string; fileType?: number; alt?: string }>();
 
-		// === 第二遍：逐行转换 ===
+		// === 逐行转换 ===
 		let inCode = false;
 		let codeBuffer: string[] = [];
 		let codeLanguage = '';
@@ -92,10 +92,10 @@ export class MarkdownConverter {
 					codeBuffer = [];
 					continue;
 				} else {
-					// 结束代码块，输出为 code_block 节点
+					// 结束代码块，输出为 codeblock 节点（墨问 API 类型名为 codeblock）
 					inCode = false;
 					content.push({
-						type: 'code_block',
+						type: 'codeblock',
 						attrs: {
 							language: codeLanguage || 'plaintext',
 						},
@@ -134,7 +134,7 @@ export class MarkdownConverter {
 				i--; // 回退一行，外层循环会 i++
 				content.push({
 					type: 'quote',
-					content: [{ type: 'text', text: quoteLines.join('\n') }]
+					content: this.processInlineFormatting(quoteLines.join('\n'))
 				});
 				content.push({ type: 'paragraph' });
 				continue;
@@ -148,7 +148,7 @@ export class MarkdownConverter {
 			if (embedWikiMatch || embedStdMatch || internalLinkMatch) {
 				await this.processEmbedOrLink(
 					trimmedLine, embedWikiMatch, embedStdMatch, internalLinkMatch,
-					imageUploadMap, content
+					uploadCache, content
 				);
 				continue;
 			}
@@ -201,49 +201,6 @@ export class MarkdownConverter {
 	}
 
 	/**
-	 * 预上传所有图片（并行），返回映射：行索引 -> 上传结果
-	 * 修复 #15：图片并行上传
-	 */
-	private async preUploadImages(lines: string[]): Promise<Map<number, { success: boolean; uuid?: string; fileType?: number; alt?: string; originalLine: string }>> {
-		const uploadMap = new Map<number, { success: boolean; uuid?: string; fileType?: number; alt?: string; originalLine: string }>();
-
-		// 收集需要上传的图片行
-		const imageTasks: Array<{ lineIndex: number; linkText: string; altText: string }> = [];
-
-		for (let i = 0; i < lines.length; i++) {
-			const trimmedLine = lines[i].trim();
-			// Wiki 链接图片: ![[image.png]]
-			const wikiMatch = trimmedLine.match(/^!\[\[(.+?)\]\]/);
-			if (wikiMatch) {
-				imageTasks.push({ lineIndex: i, linkText: wikiMatch[1], altText: wikiMatch[1] });
-				continue;
-			}
-			// 标准图片: ![alt](url) - 仅处理本地路径，不处理 http 链接
-			const stdMatch = trimmedLine.match(/^!\[([^\]]*)\]\(([^)]+)\)/);
-			if (stdMatch && !stdMatch[2].startsWith('http')) {
-				imageTasks.push({ lineIndex: i, linkText: stdMatch[2], altText: stdMatch[1] || stdMatch[2] });
-			}
-		}
-
-		if (imageTasks.length === 0) return uploadMap;
-
-		// 并行上传
-		const uploadPromises = imageTasks.map(async (task) => {
-			const result = await this.uploadSingleImage(task.linkText, task.altText);
-			uploadMap.set(task.lineIndex, {
-				success: result.success,
-				uuid: result.uuid,
-				fileType: result.fileType,
-				alt: task.altText,
-				originalLine: lines[task.lineIndex].trim()
-			});
-		});
-
-		await Promise.allSettled(uploadPromises);
-		return uploadMap;
-	}
-
-	/**
 	 * 上传单个图片/文件
 	 */
 	private async uploadSingleImage(linkText: string, altText: string): Promise<{ success: boolean; uuid?: string; fileType?: number }> {
@@ -276,7 +233,7 @@ export class MarkdownConverter {
 			const fileTypeName = getFileTypeName(fileType);
 			const fName = file.name;
 
-			const authRes = await getUploadAuthorization(settings.apiKey, fileType);
+			const authRes = await getUploadAuthorization(settings.apiKey, fileType, { fileName: fName });
 			if (authRes.success && authRes.data && authRes.data.endpoint) {
 				const uploadRes = await deliverFile(authRes.data.endpoint, authRes.data as Record<string, string>, fileBlob, fName);
 				if (uploadRes.success && uploadRes.data) {
@@ -300,13 +257,14 @@ export class MarkdownConverter {
 
 	/**
 	 * 处理图片/内嵌链接
+	 * 使用 uploadCache 避免同一图片重复上传
 	 */
 	private async processEmbedOrLink(
 		line: string,
 		embedWikiMatch: RegExpMatchArray | null,
 		embedStdMatch: RegExpMatchArray | null,
 		internalLinkMatch: RegExpMatchArray | null,
-		imageUploadMap: Map<number, { success: boolean; uuid?: string; fileType?: number; alt?: string; originalLine: string }>,
+		uploadCache: Map<string, { success: boolean; uuid?: string; fileType?: number; alt?: string }>,
 		content: NoteAtomNode[]
 	): Promise<void> {
 		const { app, settings } = this.context;
@@ -354,28 +312,56 @@ export class MarkdownConverter {
 					});
 				}
 			} else if (isImage) {
-				// 图片文件 - 使用预上传结果
-				// 由于预上传是按行索引映射的，这里需要根据 linkText 查找
-				// 直接再次上传（已在 preUploadImages 中缓存结果）
-				const uploadResult = await this.uploadSingleImage(linkText, altText);
-				if (uploadResult.success && uploadResult.uuid) {
-					const fileType = uploadResult.fileType || 1;
-					const fileTypeName = getFileTypeName(fileType);
-					const uuidKey = fileType === 2 ? 'audio-uuid' : 'uuid';
-					content.push({
-						type: fileTypeName,
-						attrs: {
-							[uuidKey]: uploadResult.uuid,
-							align: 'center',
-							alt: altText
-						}
-					});
+				// 图片文件 - 检查缓存，避免重复上传
+				const cachedResult = uploadCache.get(linkText);
+				if (cachedResult) {
+					// 已缓存（无论成功失败），直接使用
+					if (cachedResult.success && cachedResult.uuid) {
+						const fileType = cachedResult.fileType || 1;
+						const fileTypeName = getFileTypeName(fileType);
+						const uuidKey = fileType === 2 ? 'audio-uuid' : 'uuid';
+						content.push({
+							type: fileTypeName,
+							attrs: {
+								[uuidKey]: cachedResult.uuid,
+								align: 'center',
+								alt: cachedResult.alt || altText
+							}
+						});
+					} else {
+						content.push({
+							type: 'paragraph',
+							content: [{ type: 'text', text: `![${altText}](${linkText})` }]
+						});
+					}
 				} else {
-					// 上传失败 fallback
-					content.push({
-						type: 'paragraph',
-						content: [{ type: 'text', text: `![${altText}](${linkText})` }]
+					// 未缓存，执行上传并缓存结果
+					const uploadResult = await this.uploadSingleImage(linkText, altText);
+					uploadCache.set(linkText, {
+						success: uploadResult.success,
+						uuid: uploadResult.uuid,
+						fileType: uploadResult.fileType,
+						alt: altText,
 					});
+					if (uploadResult.success && uploadResult.uuid) {
+						const fileType = uploadResult.fileType || 1;
+						const fileTypeName = getFileTypeName(fileType);
+						const uuidKey = fileType === 2 ? 'audio-uuid' : 'uuid';
+						content.push({
+							type: fileTypeName,
+							attrs: {
+								[uuidKey]: uploadResult.uuid,
+								align: 'center',
+								alt: altText
+							}
+						});
+					} else {
+						// 上传失败 fallback
+						content.push({
+							type: 'paragraph',
+							content: [{ type: 'text', text: `![${altText}](${linkText})` }]
+						});
+					}
 				}
 			}
 		} else if (isImage && linkText.startsWith('http')) {
@@ -495,6 +481,7 @@ export class MarkdownConverter {
 			}
 
 			// 检测 italic 标记 (*text*) - 修复 #10
+			// 注意：墨问 NoteAtom 不支持 italic marks，转换为 highlight
 			if (textSegment[i] === '*' && textSegment[i + 1] !== '*' && (i === 0 || textSegment[i - 1] !== '*')) {
 				// 确保不是 ** 的后半部分
 				if (currentText) {
@@ -505,7 +492,7 @@ export class MarkdownConverter {
 					});
 					currentText = '';
 				}
-				this.toggleMark(activeMarks, 'italic');
+				this.toggleMark(activeMarks, 'highlight');
 				i += 1;
 				continue;
 			}
@@ -524,13 +511,13 @@ export class MarkdownConverter {
 		}
 
 		// 返回结束时的 marks 状态
-		return activeMarks.filter(m => m.type === 'bold' || m.type === 'highlight' || m.type === 'italic');
+		return activeMarks.filter(m => m.type === 'bold' || m.type === 'highlight');
 	}
 
 	/**
 	 * 切换 mark 状态
 	 */
-	private toggleMark(marks: NoteAtomMark[], markType: 'bold' | 'highlight' | 'italic'): void {
+	private toggleMark(marks: NoteAtomMark[], markType: 'bold' | 'highlight'): void {
 		const index = marks.findIndex(m => m.type === markType);
 		if (index !== -1) {
 			marks.splice(index, 1);
