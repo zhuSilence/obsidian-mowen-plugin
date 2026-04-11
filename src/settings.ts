@@ -1,5 +1,7 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import MowenPlugin from "./main";
+import { checkApiKeyHealth } from "./api";
+import { checkAIServiceHealth } from "./ai";
 
 // 定义 LLM 设置的接口
 export interface LLMSettings {
@@ -79,17 +81,35 @@ export class MowenSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('API key')
-      .setDesc('请输入你的墨问 API key')
+      .setDesc('请输入你的墨问 API key。注意：API Key 将以明文存储在本地，请勿在不信任的环境中使用。')
       .addText(text => {
         text.inputEl.type = 'password';
         text
-          .setPlaceholder('Enter your API key')
+          .setPlaceholder('输入你的 API key')
           .setValue(this.plugin.settings.apiKey)
           .onChange(async (value) => {
             this.plugin.settings.apiKey = value;
             await this.plugin.saveSettings();
           });
-      });
+      })
+      .addButton(btn => btn
+        .setButtonText('验证')
+        .onClick(async () => {
+          btn.setButtonText('验证中...');
+          btn.setDisabled(true);
+          const result = await checkApiKeyHealth(this.plugin.settings.apiKey);
+          btn.setButtonText('验证');
+          btn.setDisabled(false);
+          if (result.valid) {
+            // 使用动态 import 避免 Notice 循环
+            const { Notice } = await import('obsidian');
+            new Notice('API Key 验证通过');
+          } else {
+            const { Notice } = await import('obsidian');
+            new Notice('API Key 验证失败: ' + (result.error?.getUserMessage().title || '未知错误'));
+          }
+        })
+      );
 
     new Setting(containerEl)
       .setName('笔记ID键名')
@@ -258,7 +278,7 @@ export class MowenSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName('API key')
+      .setName('AI API key')
       .setDesc('请输入所选 AI 服务商的 API key')
       .addText(text => {
         text.inputEl.type = 'password';
@@ -269,7 +289,23 @@ export class MowenSettingTab extends PluginSettingTab {
             this.plugin.settings.llmSettings.apiKey = value;
             await this.plugin.saveSettings();
           });
-      });
+      })
+      .addButton(btn => btn
+        .setButtonText('验证')
+        .onClick(async () => {
+          btn.setButtonText('验证中...');
+          btn.setDisabled(true);
+          const result = await checkAIServiceHealth(this.plugin.settings);
+          btn.setButtonText('验证');
+          btn.setDisabled(false);
+          const { Notice } = await import('obsidian');
+          if (result.valid) {
+            new Notice('AI API Key 验证通过');
+          } else {
+            new Notice('AI API Key 验证失败: ' + (result.error?.getUserMessage().title || '未知错误'));
+          }
+        })
+      );
 
     new Setting(containerEl)
       .setName('模型名称')
