@@ -239,8 +239,8 @@ class MowenPublishModal extends Modal {
 				.setName('隐私类型')
 				.setDesc('设置笔记的隐私类型')
 				.addDropdown(drop => {
-					drop.addOption('private', '私有');
 					drop.addOption('public', '公开');
+					drop.addOption('private', '私有');
 					drop.addOption('rule', '规则');
 					drop.setValue(this.privacy);
 					drop.onChange(value => {
@@ -310,10 +310,12 @@ class MowenPublishModal extends Modal {
 									section: this.section,
 									privacy: {
 										type: this.privacy as 'private' | 'public' | 'rule',
-										rule: {
-											noShare: this.privacy === 'rule' ? this.noShare : undefined,
-											expireAt: this.privacy === 'rule' ? this.expireAt : undefined
-										}
+										...(this.privacy === 'rule' ? {
+											rule: {
+												noShare: this.noShare,
+												expireAt: this.expireAt
+											}
+										} : {})
 									}
 								},
 								summary: this.summary
