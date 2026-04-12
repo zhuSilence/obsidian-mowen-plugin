@@ -3,7 +3,8 @@
  * 集中管理所有共享的类型接口，替代散落各处的 any
  */
 
-import { NoteAtomMark } from '../api';
+// 统一从 api.ts 导出 NoteAtom 类型，消除重复定义
+export type { NoteAtomNode, NoteAtomMark } from '../api';
 
 /** 发布隐私设置 */
 export interface PublishPrivacySettings {
@@ -29,20 +30,4 @@ export interface ModalSubmitParams {
 	autoPublish: boolean;
 	settings: PublishContextSettings;
 	summary: string | null;
-}
-
-/** NoteAtom 文本节点（带 marks） */
-export interface NoteAtomTextNode {
-	type: 'text';
-	text: string;
-	marks?: NoteAtomMark[];
-}
-
-/** NoteAtom 节点（通用） */
-export interface NoteAtomNode {
-	type: string;
-	content?: NoteAtomNode[];
-	text?: string;
-	marks?: NoteAtomMark[];
-	attrs?: Record<string, unknown>;
 }

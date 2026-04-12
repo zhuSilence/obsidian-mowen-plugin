@@ -14,6 +14,17 @@ import { HandlerContext } from './handlers/types';
  */
 export function processInlineFormatting(line: string, ctx?: HandlerContext): NoteAtomNode[] {
 	const parts: NoteAtomNode[] = [];
+
+	// 先处理 [[internal link]] 行内链接
+	// 将行内内部链接转为文本节点，避免链接信息丢失
+	const internalLinkRegex = /\[\[([^\]]+?)\]\]/g;
+	const processedLine = line.replace(internalLinkRegex, (_match, linkContent: string) => {
+		// [[page|display text]] → display text, [[page]] → page
+		const pipeIndex = linkContent.indexOf('|');
+		const displayText = pipeIndex !== -1 ? linkContent.slice(pipeIndex + 1).trim() : linkContent.trim();
+		return displayText;
+	});
+
 	const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
 	let lastIndex = 0;
 	let match;
@@ -21,10 +32,10 @@ export function processInlineFormatting(line: string, ctx?: HandlerContext): Not
 	// 跟踪当前的 bold/highlight 状态
 	let currentFormatMarks: NoteAtomMark[] = [];
 
-	while ((match = linkRegex.exec(line)) !== null) {
+	while ((match = linkRegex.exec(processedLine)) !== null) {
 		// 处理链接前的文本
 		if (match.index > lastIndex) {
-			const textBeforeLink = line.slice(lastIndex, match.index);
+			const textBeforeLink = processedLine.slice(lastIndex, match.index);
 			currentFormatMarks = processTextSegment(textBeforeLink, parts, [], ctx);
 		}
 
@@ -37,8 +48,8 @@ export function processInlineFormatting(line: string, ctx?: HandlerContext): Not
 	}
 
 	// 处理链接后的剩余文本
-	if (lastIndex < line.length) {
-		const remainingText = line.slice(lastIndex);
+	if (lastIndex < processedLine.length) {
+		const remainingText = processedLine.slice(lastIndex);
 		processTextSegment(remainingText, parts, currentFormatMarks, ctx);
 	}
 

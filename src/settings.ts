@@ -24,6 +24,28 @@ export interface GlobalPublishConfig {
   };
 }
 
+/** 扩展语法转换设置 */
+export interface ExtendedSyntaxSettings {
+  /** 总开关 - 默认关闭，开启后才能使用子项开关 */
+  enabled: boolean;
+  /** P1 - 表格转换（转为 codeblock 保留对齐） */
+  table: boolean;
+  /** P1 - 任务列表（☐ 未完成 / ☑ 已完成） */
+  taskList: boolean;
+  /** P1 - Callout 引用块（提取标题加粗 + 引用内容） */
+  callout: boolean;
+  /** P1 - 删除线（~~text~~ 转为 highlight 标记） */
+  strikethrough: boolean;
+  /** P1 - 分隔线（开启时去掉 ---，关闭时原样输出） */
+  horizontalRule: boolean;
+  /** P2 - 数学公式（转为 LaTeX 代码块） */
+  math: boolean;
+  /** P2 - 嵌套列表缩进 */
+  nestedList: boolean;
+  /** P3 - 图片渲染（截图上传，保真度高但耗时）- 暂预留 */
+  renderAsImage: boolean;
+}
+
 export interface MowenPluginSettings {
   apiKey: string;
   autoPublish: boolean;
@@ -34,6 +56,7 @@ export interface MowenPluginSettings {
   llmSettings: LLMSettings; // AI 相关设置
   globalPublishEnabled: boolean; // 全局发布配置开关
   globalPublishConfig: GlobalPublishConfig; // 全局发布配置
+  extendedSyntax: ExtendedSyntaxSettings; // 扩展语法转换设置
 }
 
 export const DEFAULT_SETTINGS: MowenPluginSettings = {
@@ -62,14 +85,39 @@ export const DEFAULT_SETTINGS: MowenPluginSettings = {
       }
     }
   },
+  extendedSyntax: {
+    enabled: false,   // 总开关默认关闭
+    table: true,       // 子项默认 true，受总开关控制
+    taskList: true,
+    callout: true,
+    strikethrough: true,
+    horizontalRule: false,
+    math: true,
+    nestedList: true,
+    renderAsImage: false, // P3 预留
+  },
 };
 
 export class MowenSettingTab extends PluginSettingTab {
   plugin: MowenPlugin;
+  private saveTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor(app: App, plugin: MowenPlugin) {
     super(app, plugin);
     this.plugin = plugin;
+  }
+
+  /**
+   * 防抖保存设置，避免每次按键都触发 saveSettings
+   */
+  private debouncedSave(delay: number = 500): void {
+    if (this.saveTimeout) {
+      clearTimeout(this.saveTimeout);
+    }
+    this.saveTimeout = setTimeout(async () => {
+      await this.plugin.saveSettings();
+      this.saveTimeout = null;
+    }, delay);
   }
 
   display(): void {
@@ -89,7 +137,7 @@ export class MowenSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.apiKey)
           .onChange(async (value) => {
             this.plugin.settings.apiKey = value;
-            await this.plugin.saveSettings();
+            this.debouncedSave();
           });
       })
       .addButton(btn => btn
@@ -119,7 +167,7 @@ export class MowenSettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.noteIdKey)
         .onChange(async (value) => {
           this.plugin.settings.noteIdKey = value.trim();
-          await this.plugin.saveSettings();
+          this.debouncedSave();
         }));
 
     new Setting(containerEl)
@@ -130,7 +178,7 @@ export class MowenSettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.titleKey)
         .onChange(async (value) => {
           this.plugin.settings.titleKey = value.trim();
-          await this.plugin.saveSettings();
+          this.debouncedSave();
         }));
 
     new Setting(containerEl)
@@ -150,7 +198,7 @@ export class MowenSettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.defaultTag)
         .onChange(async (value) => {
           this.plugin.settings.defaultTag = value;
-          await this.plugin.saveSettings();
+          this.debouncedSave();
         }));
 
     new Setting(containerEl)
@@ -197,7 +245,7 @@ export class MowenSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.globalPublishConfig.tags)
           .onChange(async (value) => {
             this.plugin.settings.globalPublishConfig.tags = value;
-            await this.plugin.saveSettings();
+            this.debouncedSave();
           }));
 
       // 隐私类型
@@ -259,6 +307,105 @@ export class MowenSettingTab extends PluginSettingTab {
       }
     }
 
+    // 扩展语法转换设置
+    new Setting(containerEl).setName('扩展语法转换').setHeading();
+
+    new Setting(containerEl)
+      .setName('启用扩展语法转换')
+      .setDesc('开启后，支持将表格、任务列表、Callout、删除线、数学公式等墨问原生不支持的 Markdown 语法转换为最接近的 NoteAtom 格式。关闭时所有扩展语法原样输出。')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.extendedSyntax.enabled)
+        .onChange(async (value) => {
+          this.plugin.settings.extendedSyntax.enabled = value;
+          await this.plugin.saveSettings();
+          this.display(); // 切换时刷新UI
+        }));
+
+    if (this.plugin.settings.extendedSyntax.enabled) {
+      // ── P1 基础扩展 ──
+      new Setting(containerEl)
+        .setName('表格转换')
+        .setDesc('将 Markdown 表格转为代码块，保留对齐格式')
+        .addToggle(toggle => toggle
+          .setValue(this.plugin.settings.extendedSyntax.table)
+          .onChange(async (value) => {
+            this.plugin.settings.extendedSyntax.table = value;
+            await this.plugin.saveSettings();
+          }));
+
+      new Setting(containerEl)
+        .setName('任务列表转换')
+        .setDesc('将 - [ ] 和 - [x] 转换为 ☐ 和 ☑ 符号')
+        .addToggle(toggle => toggle
+          .setValue(this.plugin.settings.extendedSyntax.taskList)
+          .onChange(async (value) => {
+            this.plugin.settings.extendedSyntax.taskList = value;
+            await this.plugin.saveSettings();
+          }));
+
+      new Setting(containerEl)
+        .setName('Callout 转换')
+        .setDesc('将 Obsidian Callout（如 > [!note]）转换为标题加粗 + 引用内容')
+        .addToggle(toggle => toggle
+          .setValue(this.plugin.settings.extendedSyntax.callout)
+          .onChange(async (value) => {
+            this.plugin.settings.extendedSyntax.callout = value;
+            await this.plugin.saveSettings();
+          }));
+
+      new Setting(containerEl)
+        .setName('删除线转换')
+        .setDesc('将 ~~删除线~~ 转为高亮标记（类似斜体效果）')
+        .addToggle(toggle => toggle
+          .setValue(this.plugin.settings.extendedSyntax.strikethrough)
+          .onChange(async (value) => {
+            this.plugin.settings.extendedSyntax.strikethrough = value;
+            await this.plugin.saveSettings();
+          }));
+
+      new Setting(containerEl)
+        .setName('分隔线处理')
+        .setDesc('开启时去掉 --- 分隔线（墨问不支持），关闭时原样输出')
+        .addToggle(toggle => toggle
+          .setValue(this.plugin.settings.extendedSyntax.horizontalRule)
+          .onChange(async (value) => {
+            this.plugin.settings.extendedSyntax.horizontalRule = value;
+            await this.plugin.saveSettings();
+          }));
+
+      // ── P2 高级扩展 ──
+      new Setting(containerEl)
+        .setName('数学公式转换')
+        .setDesc('将 $...$ 和 $$...$$ 转换为 LaTeX 代码块')
+        .addToggle(toggle => toggle
+          .setValue(this.plugin.settings.extendedSyntax.math)
+          .onChange(async (value) => {
+            this.plugin.settings.extendedSyntax.math = value;
+            await this.plugin.saveSettings();
+          }));
+
+      new Setting(containerEl)
+        .setName('嵌套列表缩进')
+        .setDesc('将嵌套列表转换为带缩进符号的格式')
+        .addToggle(toggle => toggle
+          .setValue(this.plugin.settings.extendedSyntax.nestedList)
+          .onChange(async (value) => {
+            this.plugin.settings.extendedSyntax.nestedList = value;
+            await this.plugin.saveSettings();
+          }));
+
+      // ── P3 渲染模式（暂预留） ──
+      // new Setting(containerEl)
+      //   .setName('图片渲染（实验性）')
+      //   .setDesc('将表格、数学公式等渲染为图片后上传，保真度高但耗时')
+      //   .addToggle(toggle => toggle
+      //     .setValue(this.plugin.settings.extendedSyntax.renderAsImage)
+      //     .onChange(async (value) => {
+      //       this.plugin.settings.extendedSyntax.renderAsImage = value;
+      //       await this.plugin.saveSettings();
+      //     }));
+    }
+
     // AI 功能设置
     new Setting(containerEl).setName('AI 功能').setHeading();
 
@@ -287,7 +434,7 @@ export class MowenSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.llmSettings.apiKey)
           .onChange(async (value) => {
             this.plugin.settings.llmSettings.apiKey = value;
-            await this.plugin.saveSettings();
+            this.debouncedSave();
           });
       })
       .addButton(btn => btn
@@ -315,7 +462,7 @@ export class MowenSettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.llmSettings.model)
         .onChange(async (value) => {
           this.plugin.settings.llmSettings.model = value;
-          await this.plugin.saveSettings();
+          this.debouncedSave();
         }));
 
     new Setting(containerEl)
