@@ -14,6 +14,13 @@ export class FrontmatterService {
 	) {}
 
 	/**
+	 * 更新 settings 引用（不重建实例）
+	 */
+	updateSettings(settings: MowenPluginSettings): void {
+		this.settings = settings;
+	}
+
+	/**
 	 * 从文件缓存获取 noteId
 	 */
 	getNoteIdFromFileCache(file: TFile): string | null {

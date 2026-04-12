@@ -19,6 +19,7 @@ import { generateNoteMetadata } from "./ai";
 import { TagService } from "./services/TagService";
 import { FrontmatterService } from "./services/FrontmatterService";
 import { MarkdownConverter } from "./converter/MarkdownConverter";
+import { HandlerRegistry } from "./converter/handlers/registry";
 import { MowenPublishModal } from "./modals/MowenPublishModal";
 import { PublishContextSettings, ModalSubmitParams } from "./types";
 
@@ -38,6 +39,11 @@ export default class MowenPlugin extends Plugin {
 	settings!: MowenPluginSettings;
 	private frontmatterService!: FrontmatterService;
 	private markdownConverter!: MarkdownConverter;
+
+	/** 公开的 Handler 注册表，供第三方插件扩展 */
+	public get handlerRegistry(): HandlerRegistry {
+		return this.markdownConverter.getRegistry();
+	}
 
 	async onload() {
 		await this.loadSettings();
@@ -139,9 +145,9 @@ export default class MowenPlugin extends Plugin {
 
 	async saveSettings() {
 		await this.saveData(this.settings);
-		// 设置更新后刷新服务实例
-		this.frontmatterService = new FrontmatterService(this.app, this.settings);
-		this.markdownConverter = new MarkdownConverter({ app: this.app, settings: this.settings });
+		// 设置更新后刷新服务实例的 settings 引用（不重建实例，保留第三方 Handler 注册）
+		this.frontmatterService.updateSettings(this.settings);
+		this.markdownConverter.updateSettings(this.settings);
 	}
 
 	/**
