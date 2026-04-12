@@ -12,7 +12,6 @@ import { MowenPluginSettings } from '../settings';
 import { PublishContextSettings, ModalSubmitParams } from '../types';
 import { markdownTagsToNoteAtomTags } from '../api';
 import { generateNoteMetadata } from '../ai';
-import { MarkdownConverter } from '../converter/MarkdownConverter';
 
 class MowenPublishModal extends Modal {
 	content: string;
@@ -99,8 +98,14 @@ class MowenPublishModal extends Modal {
 
 	// 工具方法：去除 YAML frontmatter
 	private stripFrontmatter(content: string): string {
-		const converter = new MarkdownConverter({ app: this.app, settings: this.plugin.settings });
-		return converter.stripFrontmatter(content);
+		// 简单正则去除 frontmatter，避免每次创建 MarkdownConverter
+		if (content.startsWith('---')) {
+			const end = content.indexOf('\n---', 3);
+			if (end !== -1) {
+				return content.slice(end + 4).trimStart();
+			}
+		}
+		return content;
 	}
 
 	private renderLayout() {

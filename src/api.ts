@@ -110,14 +110,31 @@ export interface PublishNoteResult {
   error?: MowenError; // 结构化错误对象
 }
 
-/** API 基础地址 */
-const baseUrl = "https://open.mowen.cn/api/open/api/v1";
+/** API 基础地址（默认官方地址，可通过 setBaseUrl 覆盖） */
+let baseUrl = "https://open.mowen.cn/api/open/api/v1";
+
+/** 设置 API 基础地址（用于测试环境或自定义部署） */
+export function setBaseUrl(url: string): void {
+  baseUrl = url;
+}
+
+/** 获取当前 API 基础地址 */
+export function getBaseUrl(): string {
+  return baseUrl;
+}
 
 /** 默认请求超时时间（毫秒） */
 const DEFAULT_TIMEOUT = 30000;
 
 /** 文件上传超时时间（毫秒） */
 const UPLOAD_TIMEOUT = 60000;
+
+/** 通用 API 响应结构 */
+interface ApiResponse {
+  status: number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  json: any; // API 响应结构动态,无法静态类型化
+}
 
 /**
  * 安全的 requestUrl 包装函数
@@ -129,7 +146,7 @@ async function safeRequest(
   headers: Record<string, string>,
   body?: string,
   timeout: number = DEFAULT_TIMEOUT
-): Promise<{ status: number; json: any }> {
+): Promise<ApiResponse> {
   try {
     const response = await requestUrl({
       url,
