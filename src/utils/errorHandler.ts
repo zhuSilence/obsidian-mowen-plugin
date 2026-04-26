@@ -198,7 +198,7 @@ export function classifyApiError(status: number, responseBody: any, originalErro
   }
   
   // 业务错误（状态码 200 但返回错误）
-  if (status === 200 && responseBody && responseBody.noteId === '' || responseBody?.success === false) {
+  if ((status === 200 && responseBody && responseBody.noteId === '') || responseBody?.success === false) {
     return new MowenError(MowenErrorCode.API_BUSINESS_ERROR, responseBody?.msg || '操作失败', originalError, status);
   }
   

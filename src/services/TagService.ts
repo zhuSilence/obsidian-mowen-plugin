@@ -23,11 +23,9 @@ export class TagService {
 		const globalTags = globalTagsStr
 			? globalTagsStr.split(',').map((t) => t.trim()).filter(Boolean)
 			: [];
-		const defaultTags = defaultTag
-			? defaultTag.split(',').map((t) => t.trim()).filter(Boolean)
-			: [];
+		// markdownTagsToNoteAtomTags 内部已追加 defaultTag，无需再单独添加
 		const noteTags = markdownTagsToNoteAtomTags(content, defaultTag || 'Obsidian').tags || [];
-		const tagsArr = Array.from(new Set([...defaultTags, ...globalTags, ...noteTags]));
+		const tagsArr = Array.from(new Set([...globalTags, ...noteTags]));
 		return tagsArr.join(',');
 	}
 }

@@ -111,10 +111,8 @@ ${summaryInstruction}
     };
 
     try {
-      // 修复 #17: 使用 AbortController + clearTimeout 替代 Promise.race 泄漏
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), AI_DEFAULT_TIMEOUT);
-      
+      // 修复: 直接使用 requestUrl 的 timeout 参数实现超时
+      // AbortController 对 requestUrl 无效，因为 requestUrl 不支持 signal 参数
       let response;
       try {
         response = await requestUrl({
@@ -125,10 +123,12 @@ ${summaryInstruction}
             'Authorization': `Bearer ${apiKey}`,
           },
           body: JSON.stringify(requestBody),
-        });
+          timeout: AI_DEFAULT_TIMEOUT,
+        } as any);
       } catch (error: any) {
-        // 检查是否为超时
-        if (error.name === 'AbortError' || controller.signal.aborted) {
+        // requestUrl 超时会抛出带 status 的错误或网络错误
+        const err = error as any;
+        if (err.status === 0 || (err.message && err.message.includes('timeout'))) {
           throw new AIServiceError(
             MowenErrorCode.NETWORK_TIMEOUT,
             `AI 请求超时(${AI_DEFAULT_TIMEOUT}ms)`,
@@ -136,8 +136,6 @@ ${summaryInstruction}
           );
         }
         throw error;
-      } finally {
-        clearTimeout(timeoutId);
       }
       
       const data = response.json;

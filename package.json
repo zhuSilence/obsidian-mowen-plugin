@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-mowen-plugin",
-	"version": "0.0.28",
+	"version": "0.0.29",
 	"description": "This is a mowen plugin for Obsidian (https://obsidian.md)",
 	"main": "main.js",
 	"scripts": {

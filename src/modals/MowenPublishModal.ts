@@ -12,7 +12,6 @@ import { MowenPluginSettings } from '../settings';
 import { PublishContextSettings, ModalSubmitParams } from '../types';
 import { markdownTagsToNoteAtomTags } from '../api';
 import { generateNoteMetadata } from '../ai';
-import { MarkdownConverter } from '../converter/MarkdownConverter';
 
 class MowenPublishModal extends Modal {
 	content: string;
@@ -54,7 +53,7 @@ class MowenPublishModal extends Modal {
 		this.onSubmit = onSubmit;
 	}
 
-	async onOpen() {
+	onOpen() {
 		const { contentEl } = this;
 		contentEl.empty();
 
@@ -65,33 +64,48 @@ class MowenPublishModal extends Modal {
 
 		// 首次打开时加载现有设置
 		if (!this.initialLoadDone) {
-			const loadedSettings = await this.plugin.getSettingsFromFrontmatter();
-			this.tags = loadedSettings.tags
-				? loadedSettings.tags
-				: markdownTagsToNoteAtomTags(this.content, this.plugin.settings.defaultTag).tags.join(',');
-			this.autoPublish = typeof loadedSettings.auto_publish !== 'undefined'
-				? loadedSettings.auto_publish
-				: this.plugin.settings.autoPublish;
-			this.section = loadedSettings.privacy ? 1 : 0;
-			if (loadedSettings.privacy) {
-				this.privacy = loadedSettings.privacy.type;
-				if (loadedSettings.privacy.rule) {
-					this.noShare = loadedSettings.privacy.rule.noShare ?? false;
-					this.expireAt = loadedSettings.privacy.rule.expireAt ?? 0;
-				}
-			}
-			this.initialLoadDone = true;
+			this.loadSettingsFromFrontmatter().then(() => {
+				this.renderLayout();
+				this.updateContentPreview();
+				this.renderPrivacySection();
+			});
+		} else {
+			this.renderLayout();
+			this.updateContentPreview();
+			this.renderPrivacySection();
 		}
+	}
 
-		this.renderLayout();
-		this.updateContentPreview();
-		this.renderPrivacySection();
+	// 从 frontmatter 加载设置
+	private async loadSettingsFromFrontmatter(): Promise<void> {
+		const loadedSettings = await this.plugin.getSettingsFromFrontmatter();
+		this.tags = loadedSettings.tags
+			? loadedSettings.tags
+			: markdownTagsToNoteAtomTags(this.content, this.plugin.settings.defaultTag).tags.join(',');
+		this.autoPublish = typeof loadedSettings.auto_publish !== 'undefined'
+			? loadedSettings.auto_publish
+			: this.plugin.settings.autoPublish;
+		this.section = loadedSettings.privacy ? 1 : 0;
+		if (loadedSettings.privacy) {
+			this.privacy = loadedSettings.privacy.type;
+			if (loadedSettings.privacy.rule) {
+				this.noShare = loadedSettings.privacy.rule.noShare ?? false;
+				this.expireAt = loadedSettings.privacy.rule.expireAt ?? 0;
+			}
+		}
+		this.initialLoadDone = true;
 	}
 
 	// 工具方法：去除 YAML frontmatter
 	private stripFrontmatter(content: string): string {
-		const converter = new MarkdownConverter({ app: this.app, settings: this.plugin.settings });
-		return converter.stripFrontmatter(content);
+		// 简单正则去除 frontmatter，避免每次创建 MarkdownConverter
+		if (content.startsWith('---')) {
+			const end = content.indexOf('\n---', 3);
+			if (end !== -1) {
+				return content.slice(end + 4).trimStart();
+			}
+		}
+		return content;
 	}
 
 	private renderLayout() {
@@ -263,8 +277,8 @@ class MowenPublishModal extends Modal {
 			const ruleContainer = this.privacySectionContainer.createDiv({ cls: 'privacy-rule-container' });
 
 			new Setting(ruleContainer)
-				.setName('允许分享')
-				.setDesc('是否允许分享')
+				.setName('禁止分享')
+				.setDesc('开启后，禁止他人分享/转发该笔记')
 				.addToggle(toggle => {
 					toggle.setValue(this.noShare).onChange(value => {
 						this.noShare = value;
