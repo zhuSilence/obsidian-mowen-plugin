@@ -39,7 +39,8 @@ export class HeadingHandler implements BlockHandler {
 				{
 					type: 'paragraph',
 					content: boldContent
-				}
+				},
+				{ type: 'paragraph' }
 			],
 			linesConsumed: 1,
 		};

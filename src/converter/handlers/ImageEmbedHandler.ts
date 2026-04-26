@@ -5,7 +5,7 @@
  * 包含图片上传、内嵌笔记、外部链接等逻辑
  */
 
-import { App, Notice, TFile } from 'obsidian';
+import { App, Notice, requestUrl, TFile } from 'obsidian';
 import { NoteAtomNode, getUploadAuthorization, deliverFile, getFileType, getFileTypeName, getMimeType } from '../../api';
 import { BlockHandler, HandlerContext, HandlerResult, UploadCacheEntry } from './types';
 
@@ -110,11 +110,55 @@ export class ImageEmbedHandler implements BlockHandler {
 				}
 			}
 		} else if (isImage && linkText.startsWith('http')) {
-			// 外部 URL 图片 - 直接作为链接保留
-			nodes.push({
-				type: 'paragraph',
-				content: [{ type: 'text', text: `![${altText}](${linkText})` }]
-			});
+			// 外部 URL 图片 - 下载并上传到墨问 CDN
+			const cachedResult = ctx.uploadCache.get(linkText);
+			if (cachedResult) {
+				if (cachedResult.success && cachedResult.uuid) {
+					const fileType = cachedResult.fileType || 1;
+					const fileTypeName = getFileTypeName(fileType);
+					const uuidKey = fileType === 2 ? 'audio-uuid' : 'uuid';
+					nodes.push({
+						type: fileTypeName,
+						attrs: {
+							[uuidKey]: cachedResult.uuid,
+							align: 'center',
+							alt: cachedResult.alt || altText
+						}
+					});
+				} else {
+					nodes.push({
+						type: 'paragraph',
+						content: [{ type: 'text', text: `![${altText}](${linkText})` }]
+					});
+				}
+			} else {
+				// 未缓存，下载并上传
+				const uploadResult = await this.uploadRemoteImage(linkText, altText, ctx);
+				ctx.uploadCache.set(linkText, {
+					success: uploadResult.success,
+					uuid: uploadResult.uuid,
+					fileType: uploadResult.fileType,
+					alt: altText,
+				});
+				if (uploadResult.success && uploadResult.uuid) {
+					const fileType = uploadResult.fileType || 1;
+					const fileTypeName = getFileTypeName(fileType);
+					const uuidKey = fileType === 2 ? 'audio-uuid' : 'uuid';
+					nodes.push({
+						type: fileTypeName,
+						attrs: {
+							[uuidKey]: uploadResult.uuid,
+							align: 'center',
+							alt: altText
+						}
+					});
+				} else {
+					nodes.push({
+						type: 'paragraph',
+						content: [{ type: 'text', text: `![${altText}](${linkText})` }]
+					});
+				}
+			}
 		} else {
 			new Notice(`文件未找到: ${linkText}`);
 			nodes.push({
@@ -170,5 +214,119 @@ export class ImageEmbedHandler implements BlockHandler {
 		}
 
 		return { success: false };
+	}
+
+	/**
+	 * 下载远程图片并上传到墨问 CDN
+	 */
+	private async uploadRemoteImage(
+		url: string,
+		altText: string,
+		ctx: HandlerContext
+	): Promise<{ success: boolean; uuid?: string; fileType?: number }> {
+		const { settings } = ctx;
+
+		try {
+			new Notice(`正在下载远程图片: ${url}`);
+
+			// 下载远程图片（添加 Referer 绕过 OSS 防盗链）
+			const urlOrigin = this.extractUrlOrigin(url);
+			const response = await requestUrl({
+				url,
+				method: 'GET',
+				headers: {
+					'Referer': urlOrigin,
+					'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+				},
+			});
+
+			// 根据 Content-Type 判断扩展名
+			const contentType = (response.headers['content-type'] || '').toLowerCase();
+			let extension = this.extractUrlExtension(url);
+			if (!extension) {
+				if (contentType.includes('image/png')) extension = 'png';
+				else if (contentType.includes('image/jpeg')) extension = 'jpg';
+				else if (contentType.includes('image/webp')) extension = 'webp';
+				else if (contentType.includes('image/gif')) extension = 'gif';
+				else if (contentType.includes('image/svg')) extension = 'svg';
+				else if (contentType.includes('image/bmp')) extension = 'bmp';
+				else extension = 'jpg'; // 默认
+			}
+
+			// 从 URL 提取文件名
+			const fName = this.extractUrlFileName(url, extension);
+
+			const mimeType = getMimeType(extension);
+			const fileBlob = new Blob([response.arrayBuffer], { type: mimeType });
+			const fileType = getFileType(extension);
+
+			const authRes = await getUploadAuthorization(settings.apiKey, fileType, { fileName: fName });
+			if (authRes.success && authRes.data && authRes.data.endpoint) {
+				const uploadRes = await deliverFile(
+					authRes.data.endpoint,
+					authRes.data as Record<string, string>,
+					fileBlob,
+					fName
+				);
+				if (uploadRes.success && uploadRes.data) {
+					const uuid = uploadRes.data.file?.fileId || '';
+					new Notice(`远程图片上传成功: ${fName}`);
+					return { success: true, uuid, fileType };
+				} else {
+					new Notice(`远程图片上传失败: ${fName} - ${uploadRes.message}`);
+				}
+			} else {
+				new Notice(`获取远程图片上传授权失败: ${authRes.message}`);
+			}
+		} catch (error) {
+			console.error('远程图片下载/上传异常:', error);
+			new Notice(`远程图片处理异常: ${altText}`);
+		}
+
+		return { success: false };
+	}
+
+	/**
+	 * 从 URL 提取 origin（用于 Referer 绕过防盗链）
+	 */
+	private extractUrlOrigin(url: string): string {
+		try {
+			const u = new URL(url);
+			return `${u.protocol}//${u.host}`;
+		} catch {
+			return url;
+		}
+	}
+
+	/**
+	 * 从 URL 中提取文件扩展名
+	 */
+	private extractUrlExtension(url: string): string {
+		try {
+			const pathname = new URL(url).pathname;
+			const fileName = pathname.substring(pathname.lastIndexOf('/') + 1);
+			// 匹配 ? 或 # 之前的扩展名
+			const extMatch = fileName.match(/\.([a-zA-Z0-9]+)(?:[?#]|$)/);
+			if (extMatch) return extMatch[1].toLowerCase();
+		} catch {}
+		return '';
+	}
+
+	/**
+	 * 从 URL 中提取文件名（不含扩展名时自动追加）
+	 */
+	private extractUrlFileName(url: string, extension: string): string {
+		try {
+			const pathname = new URL(url).pathname;
+			let fileName = pathname.substring(pathname.lastIndexOf('/') + 1);
+			// 去除查询参数和 hash
+			fileName = fileName.split('?')[0].split('#')[0];
+			if (!fileName) fileName = 'image';
+			// 如果已经有扩展名则保持不变，否则追加
+			if (fileName.includes('.')) return fileName;
+			return `${fileName}.${extension}`;
+		} catch {
+			return `image.${extension}`;
+		}
 	}
 }
