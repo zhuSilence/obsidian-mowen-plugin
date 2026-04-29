@@ -34,7 +34,7 @@ export class ListHandler implements BlockHandler {
 				{
 					type: 'paragraph',
 					content: [
-						{ type: 'text', text: listMatch[2] + ' ' },
+						{ type: 'text', text: '• ' },
 						...listContent
 					]
 				},
