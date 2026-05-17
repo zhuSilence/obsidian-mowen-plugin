@@ -673,49 +673,49 @@ export function getFileTypeName(fileType: number): string {
 
 /**
  * 检查 API Key 是否有效（健康检查）
- * 通过调用一个轻量级 API 来验证
+ * 通过调用 /my/profile 接口获取用户信息来验证
  */
 export async function checkApiKeyHealth(apiKey: string): Promise<{ valid: boolean; error?: MowenError }> {
   if (!apiKey || apiKey.trim() === '') {
-    return { 
-      valid: false, 
-      error: new MowenError(MowenErrorCode.CONFIG_API_KEY_MISSING) 
+    return {
+      valid: false,
+      error: new MowenError(MowenErrorCode.CONFIG_API_KEY_MISSING)
     };
   }
-  
+
   try {
-    // 尝试获取上传授权作为健康检查（轻量级操作）
+    // 调用用户信息接口验证 API Key
     const response = await safeRequest(
-      `${baseUrl}/upload/prepare`,
+      `${baseUrl}/my/profile`,
       "POST",
       {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${apiKey}`,
       },
-      JSON.stringify({ fileType: 1 }),
+      "{}",
       10000 // 10秒超时
     );
-    
+
     if (response.status === 401) {
-      return { 
-        valid: false, 
-        error: new MowenError(MowenErrorCode.API_UNAUTHORIZED, 'API Key 无效或已过期') 
+      return {
+        valid: false,
+        error: new MowenError(MowenErrorCode.API_UNAUTHORIZED, 'API Key 无效或已过期')
       };
     }
-    
+
     if (response.status === 200) {
       return { valid: true };
     }
-    
+
     // 其他状态码
-    return { 
-      valid: false, 
-      error: classifyApiError(response.status, response.json, undefined) 
+    return {
+      valid: false,
+      error: classifyApiError(response.status, response.json, undefined)
     };
   } catch (error: any) {
-    return { 
-      valid: false, 
-      error: error instanceof MowenError ? error : classifyNetworkError(error as Error) 
+    return {
+      valid: false,
+      error: error instanceof MowenError ? error : classifyNetworkError(error as Error)
     };
   }
 }
