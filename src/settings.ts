@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { App, PluginSettingTab, Setting, Notice } from "obsidian";
 import MowenPlugin from "./main";
 import { checkApiKeyHealth } from "./api";
 import { checkAIServiceHealth } from "./ai";
@@ -149,11 +149,8 @@ export class MowenSettingTab extends PluginSettingTab {
           btn.setButtonText('验证');
           btn.setDisabled(false);
           if (result.valid) {
-            // 使用动态 import 避免 Notice 循环
-            const { Notice } = await import('obsidian');
             new Notice('API Key 验证通过');
           } else {
-            const { Notice } = await import('obsidian');
             new Notice('API Key 验证失败: ' + (result.error?.getUserMessage().title || '未知错误'));
           }
         })
@@ -445,7 +442,6 @@ export class MowenSettingTab extends PluginSettingTab {
           const result = await checkAIServiceHealth(this.plugin.settings);
           btn.setButtonText('验证');
           btn.setDisabled(false);
-          const { Notice } = await import('obsidian');
           if (result.valid) {
             new Notice('AI API Key 验证通过');
           } else {
