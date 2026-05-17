@@ -673,7 +673,7 @@ export function getFileTypeName(fileType: number): string {
 
 /**
  * 检查 API Key 是否有效（健康检查）
- * 通过调用 /my/profile 接口获取用户信息来验证
+ * 通过调用 /upload/prepare 接口验证（官方文档确认存在的轻量级接口）
  */
 export async function checkApiKeyHealth(apiKey: string): Promise<{ valid: boolean; error?: MowenError }> {
   if (!apiKey || apiKey.trim() === '') {
@@ -684,15 +684,15 @@ export async function checkApiKeyHealth(apiKey: string): Promise<{ valid: boolea
   }
 
   try {
-    // 调用用户信息接口验证 API Key
+    // 使用上传授权接口验证 API Key（轻量级操作，官方文档确认存在）
     const response = await safeRequest(
-      `${baseUrl}/my/profile`,
+      `${baseUrl}/upload/prepare`,
       "POST",
       {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${apiKey}`,
       },
-      "{}",
+      JSON.stringify({ fileType: 1 }),
       10000 // 10秒超时
     );
 
